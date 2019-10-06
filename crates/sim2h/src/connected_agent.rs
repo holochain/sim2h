@@ -6,8 +6,8 @@ pub type AgentId = Address;
 #[derive(PartialEq, Debug, Clone)]
 pub enum ConnectedAgent {
     Limbo,
-    RequestedJoiningSpace(AgentId, SpaceHash),
-    JoinedSpace(AgentId, SpaceHash),
+    //    RequestedJoiningSpace(SpaceHash, AgentId),
+    JoinedSpace(SpaceHash, AgentId),
 }
 
 #[allow(dead_code)]

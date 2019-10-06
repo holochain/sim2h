@@ -5,7 +5,9 @@ extern crate log;
 pub mod connected_agent;
 pub mod wire_message;
 
-use lib3h_protocol::{data_types::SpaceData, protocol::ClientToLib3h, uri::Lib3hUri};
+use lib3h_protocol::{
+    data_types::SpaceData, protocol::ClientToLib3h, types::SpaceHash, uri::Lib3hUri,
+};
 use parking_lot::RwLock;
 use std::{collections::HashMap, result};
 
@@ -31,17 +33,35 @@ impl Sim2h {
     }
 
     // adds an agent to a space
-    fn join(&self, uri: &Lib3hUri, data: SpaceData) -> Sim2hResult<()> {
-        let _ = self.connection_states.write().insert(
-            uri.clone(),
-            ConnectedAgent::JoinedSpace(data.agent_id.clone(), data.space_address.clone()),
-        );
-        Ok(())
+    fn join(&self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
+        if let Some(ConnectedAgent::Limbo) = self.get_connection(uri) {
+            let _ = self.connection_states.write().insert(
+                uri.clone(),
+                ConnectedAgent::JoinedSpace(data.space_address.clone(), data.agent_id.clone()),
+            );
+            Ok(())
+        } else {
+            Err(format!("no agent found in limbo at {} ", uri))
+        }
     }
 
+    // get the connection status of an agent
     fn get_connection(&self, uri: &Lib3hUri) -> Option<ConnectedAgent> {
         let reader = self.connection_states.read();
         reader.get(uri).map(|ca| (*ca).clone())
+    }
+
+    // find out if an agent is in a space or not and return its URI
+    // TODO get from a cache instead of iterating
+    fn lookup_joined(&self, space_address: &SpaceHash, agent_id: &AgentId) -> Option<Lib3hUri> {
+        for (key, val) in self.connection_states.read().iter() {
+            if let ConnectedAgent::JoinedSpace(item_space, item_agent) = val {
+                if item_space == space_address && item_agent == agent_id {
+                    return Some(key.clone());
+                }
+            }
+        }
+        None
     }
 
     // handler for incoming connections
@@ -61,25 +81,48 @@ impl Sim2h {
         let agent = self
             .get_connection(uri)
             .ok_or_else(|| format!("no connection for {}", uri))?;
-        if let ConnectedAgent::Limbo = agent {
-            if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
-                self.join(uri, data)?;
-            } else {
-                return Err(format!("no agent validated at {} ", uri));
+        match agent {
+            ConnectedAgent::Limbo => {
+                if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
+                    self.join(uri, &data)
+                } else {
+                    Err(format!("no agent validated at {} ", uri))
+                }
+            }
+            //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
+            ConnectedAgent::JoinedSpace(space_address, agent_id) => {
+                self.proxy(space_address, agent_id, message)
             }
         }
-        /*   match  {
-            None => return ),
-            Some(state) => {
-                match state {
-                    ConnectedAgent::Limbo =>
-                }
-                self.process_limbo(agent, payload),
-            }
-            ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
-            ConnectionState::JoinedSpace(agent_id, space_address) => self.proxy(space_address, agent_id, payload),
-        }*/
+    }
 
+    fn proxy(
+        &self,
+        space_address: SpaceHash,
+        agent_id: AgentId,
+        message: WireMessage,
+    ) -> Sim2hResult<()> {
+        match message {
+            // -- Space -- //
+            WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => {
+                panic!("join message should have been processed in process_limbo")
+            } //handled in process_limbo
+
+            // -- Direct Messaging -- //
+            // Send a message directly to another agent on the network
+            WireMessage::ClientToLib3h(ClientToLib3h::SendDirectMessage(dm_data)) => {
+                if dm_data.from_agent_id != agent_id || dm_data.space_address != space_address {
+                    return Err("space/agent id mismatch".into());
+                }
+                /*let other_url = self.lookup_joined(space_address, dm_data.to_agent_id)?;
+
+                                let payload = WireMessage::Lib3hToClient::HandleSendDirectMessage(dm_data).into();
+
+                                self.transport.send(RequestToChild::SendMessage{ uri: other_url, payload });
+                */
+            }
+            _ => unimplemented!(),
+        }
         Ok(())
     }
 
@@ -119,9 +162,6 @@ impl Sim2h {
                     /// create an explicit connection to a remote peer
                     Bootstrap(BootstrapData) => {// handled in client}
 
-                    // -- Space -- //
-                    /// Order the engine to be part of the network of the specified space.
-                    JoinSpace(SpaceData) => {panic!("should have been processed in process_limbo")} //handled in process_limbo
                     /// Order the engine to leave the network of the specified space.
                     LeaveSpace(SpaceData) => {
                         // remove from map
@@ -133,19 +173,6 @@ impl Sim2h {
                                 self.connection_states.write().remove(uri);
                                 self.transport.send(RequestToChild::Disconnect(uri));
                             })
-                    }
-
-                    // -- Direct Messaging -- //
-                    /// Send a message directly to another agent on the network
-                    SendDirectMessage(dm_data) => {
-                        if dm_data.from_agent_id != agent_id {
-                            return Err("don't do that")
-                        }
-                        let other_url = self.lookup_joined(space_address, dm_data.to_agent_id)?;
-
-                        let payload = WireMessage::Lib3hToClient::HandleSendDirectMessage(dm_data).into();
-
-                        self.transport.send(RequestToChild::SendMessage{ uri: other_url, payload });
                     }
 
                     // -- Entry -- //
@@ -219,6 +246,22 @@ pub mod tests {
     use super::*;
     use lib3h_protocol::data_types::SpaceData;
 
+    fn make_test_space_data() -> SpaceData {
+        SpaceData {
+            request_id: "".into(),
+            space_address: "fake_space_address".into(),
+            agent_id: "fake_agent_id".into(),
+        }
+    }
+
+    fn make_test_join_message() -> WireMessage {
+        WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(make_test_space_data()))
+    }
+
+    fn make_test_err_message() -> WireMessage {
+        WireMessage::Err("fake_error".into())
+    }
+
     #[test]
     pub fn test_constructor() {
         let sim2h = Sim2h::new();
@@ -250,20 +293,29 @@ pub mod tests {
         assert_eq!("Some(Limbo)", format!("{:?}", result));
     }
 
-    fn make_test_space_data() -> SpaceData {
-        SpaceData {
-            request_id: "".into(),
-            space_address: "fake_space_address".into(),
-            agent_id: "fake_agent_id".into(),
-        }
-    }
+    #[test]
+    pub fn test_join() {
+        let sim2h = Sim2h::new();
+        let uri = Lib3hUri::with_memory("addr_1");
 
-    fn make_test_join_message() -> WireMessage {
-        WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(make_test_space_data()))
-    }
+        let data = make_test_space_data();
+        // you can't join if you aren't in limbo
+        let result = sim2h.join(&uri, &data);
+        assert_eq!(result, Err(format!("no agent found in limbo at {} ", &uri)));
 
-    fn make_test_err_message() -> WireMessage {
-        WireMessage::Err("fake_error".into())
+        // but you can if you are  TODO: real membrane check
+        let _result = sim2h.handle_incoming_connect(uri.clone());
+        let result = sim2h.join(&uri, &data);
+        assert_eq!(result, Ok(()));
+        assert_eq!(
+            sim2h.lookup_joined(&data.space_address, &data.agent_id),
+            Some(uri.clone())
+        );
+        let result = sim2h.get_connection(&uri).clone();
+        assert_eq!(
+            "Some(JoinedSpace(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
+            format!("{:?}", result)
+        );
     }
 
     #[test]
@@ -285,7 +337,7 @@ pub mod tests {
         assert_eq!(result, Ok(()));
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
-            "Some(JoinedSpace(HashString(\"fake_agent_id\"), SpaceHash(HashString(\"fake_space_address\"))))",
+            "Some(JoinedSpace(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
             format!("{:?}", result)
         );
     }
