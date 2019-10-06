@@ -91,31 +91,36 @@ impl Sim2h {
             }
             //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
             ConnectedAgent::JoinedSpace(space_address, agent_id) => {
-                self.proxy(space_address, agent_id, message)
+                self.proxy(&space_address, &agent_id, message)
             }
         }
     }
 
     fn proxy(
         &self,
-        space_address: SpaceHash,
-        agent_id: AgentId,
+        space_address: &SpaceHash,
+        agent_id: &AgentId,
         message: WireMessage,
     ) -> Sim2hResult<()> {
         match message {
             // -- Space -- //
             WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => {
-                panic!("join message should have been processed in process_limbo")
-            } //handled in process_limbo
+                return Err(
+                    "join message should have been processed elsewhere and can't be proxied".into(),
+                );
+            }
 
             // -- Direct Messaging -- //
             // Send a message directly to another agent on the network
             WireMessage::ClientToLib3h(ClientToLib3h::SendDirectMessage(dm_data)) => {
-                if dm_data.from_agent_id != agent_id || dm_data.space_address != space_address {
+                if (dm_data.from_agent_id != *agent_id) || (dm_data.space_address != *space_address)
+                {
                     return Err("space/agent id mismatch".into());
                 }
-                /*let other_url = self.lookup_joined(space_address, dm_data.to_agent_id)?;
-
+                let _other_url = self
+                    .lookup_joined(space_address, &dm_data.to_agent_id)
+                    .ok_or_else(|| format!("unvalidated proxy agent {}", &dm_data.to_agent_id))?;
+                /*
                                 let payload = WireMessage::Lib3hToClient::HandleSendDirectMessage(dm_data).into();
 
                                 self.transport.send(RequestToChild::SendMessage{ uri: other_url, payload });
@@ -244,7 +249,7 @@ impl Sim2h {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use lib3h_protocol::data_types::SpaceData;
+    use lib3h_protocol::data_types::*;
 
     fn make_test_space_data() -> SpaceData {
         SpaceData {
@@ -256,6 +261,20 @@ pub mod tests {
 
     fn make_test_join_message() -> WireMessage {
         WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(make_test_space_data()))
+    }
+
+    fn make_test_dm_data() -> DirectMessageData {
+        DirectMessageData {
+            request_id: "".into(),
+            space_address: "fake_space_address".into(),
+            from_agent_id: "fake_agent_id".into(),
+            to_agent_id: "fake_to_agent_id".into(),
+            content: "foo".into(),
+        }
+    }
+
+    fn make_test_dm_message() -> WireMessage {
+        WireMessage::ClientToLib3h(ClientToLib3h::SendDirectMessage(make_test_dm_data()))
     }
 
     fn make_test_err_message() -> WireMessage {
@@ -338,6 +357,32 @@ pub mod tests {
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
             "Some(JoinedSpace(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
+            format!("{:?}", result)
+        );
+    }
+
+    #[test]
+    pub fn test_proxy() {
+        let sim2h = Sim2h::new();
+        let _uri = Lib3hUri::with_memory("addr_1");
+
+        let message = make_test_join_message();
+        let data = make_test_space_data();
+
+        // you can't proxy a join message
+        let result = sim2h.proxy(&data.space_address, &data.agent_id, message);
+        assert!(result.is_err());
+
+        // you can't proxy for someone else
+        let message = make_test_dm_message();
+        let result = sim2h.proxy(&data.space_address, &"fake_other_agent".into(), message);
+        assert_eq!("Err(\"space/agent id mismatch\")", format!("{:?}", result));
+
+        // you can't proxy for someone not in the space
+        let message = make_test_dm_message();
+        let result = sim2h.proxy(&data.space_address, &data.agent_id, message);
+        assert_eq!(
+            "Err(\"unvalidated proxy agent fake_to_agent_id\")",
             format!("{:?}", result)
         );
     }
