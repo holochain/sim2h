@@ -386,12 +386,13 @@ pub mod tests {
         let result = sim2h.prepare_proxy(&data.space_address, &data.agent_id, message);
         assert!(result.is_err());
 
-        // you can't proxy for someone else
+        // you can't proxy for someone else, i.e. the message contents must match the
+        // space joined
         let message = make_test_dm_message();
         let result = sim2h.prepare_proxy(&data.space_address, &"fake_other_agent".into(), message);
         assert_eq!("Err(\"space/agent id mismatch\")", format!("{:?}", result));
 
-        // you can't proxy for someone not in the space
+        // you can't proxy to someone not in the space
         let message = make_test_dm_message();
         let result = sim2h.prepare_proxy(&data.space_address, &data.agent_id, message.clone());
         assert_eq!(
@@ -400,6 +401,7 @@ pub mod tests {
         );
 
         // proxy a dm message
+        // first we have to setup the to agent in the space
         let to_agent_data = make_test_space_data_with_agent("fake_to_agent_id".into());
         let uri = Lib3hUri::with_memory("addr_1");
         let _ = sim2h.handle_incoming_connect(uri.clone());
