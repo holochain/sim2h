@@ -4,7 +4,7 @@ use lib3h_protocol::protocol::*;
 pub type Sim2hWireError = String;
 
 #[allow(dead_code)]
-enum WireMessage {
+pub enum WireMessage {
     ClientToLib3h(ClientToLib3h),
     ClientToLib3hResponse(ClientToLib3hResponse),
     Lib3hToClient(Lib3hToClient),

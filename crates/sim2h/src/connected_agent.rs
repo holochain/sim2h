@@ -1,12 +1,9 @@
 //! represents the state of connected agents
-use lib3h_protocol::{
-    Address,
-    types::SpaceHash,
-};
+use lib3h_protocol::{types::SpaceHash, Address};
 
 pub type AgentId = Address;
 
-#[derive(PartialEq,Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum ConnectedAgent {
     Limbo,
     RequestedJoiningSpace(AgentId, SpaceHash),
@@ -27,6 +24,6 @@ pub mod tests {
     #[test]
     pub fn test_connected_agent() {
         let ca = ConnectedAgent::new();
-        assert_eq!(ca,ConnectedAgent::Limbo);
+        assert_eq!(ca, ConnectedAgent::Limbo);
     }
 }
