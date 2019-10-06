@@ -36,18 +36,28 @@ impl Sim2h {
             connection_states: RwLock::new(HashMap::new()),
         }
     }
+
+    // handler for incoming connections
     fn handle_incoming_connect(&self, uri: Lib3hUri) -> Sim2hResult<bool> {
-        let _r = self.connection_states.write().insert(uri, ConnectedAgent::new());
-        /*if self.connection_states.contains(uri) {
-            self.connection_states.write().remove(uri);
-            // We got another incoming connelet maybe_uri = ction from the same
-            // remote URI?! This is strange!
-            // We should tell the transport actor to drop
-            // the connection.
-        } else {*/
-        //        }
-            Ok(true)
+        if let Some(_old) = self.connection_states.write().insert(uri.clone(), ConnectedAgent::new()) {
+            println!("should remove {}",uri); //TODO
+        };
+        Ok(true)
     }
+
+    // handler for messages sent to sim2h
+    fn handle_message(&self, uri: &Lib3hUri, _payload: String) -> Sim2hResult<()> {
+        match self.connection_states.read().get(uri) {
+            None => return Err(format!("no connection for {}",uri)),
+            _ => unimplemented!()/*
+            ConnectionState::Limbo => self.process_limbo(agent, payload),
+            ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
+            ConnectionState::JoinedSpace(agent_id, space_address) => self.proxy(space_address, agent_id, payload),
+        }*/
+        };
+        //Ok(())
+    }
+
     /*
     fn join(&self, space, agent)
     fn leave(&self, space, agent)
@@ -64,12 +74,7 @@ impl Sim2h {
     fn process_next_message(&self) {
         match transport.drain() {
             RequestToParent::ReceivedData{uri, payload} => {
-                let agent = self.connection_states.get(uri)?;
-                    match agent.state {
-                        ConnectionState::Limbo => self.process_limbo(agent, payload),
-                        ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
-                        ConnectionState::JoinedSpace(agent_id, space_address) => self.proxy(space_address, agent_id, payload),
-                    }
+                self.handle_message(uri,payload)?
             }
             RequestToParent::IncomingConnection{uri} => {
                 self.handle_incominng_connection(uri)?
@@ -226,6 +231,20 @@ pub mod tests {
             "Some(Limbo)",
             format!("{:?}", result)
         );
+    }
+
+    #[test]
+    pub fn test_message() {
+        let sim2h = Sim2h::new();
+        let uri = Lib3hUri::with_memory("addr_1");
+
+        let payload = "message".to_string();
+        // a message from an unconnected agent should return an error
+        let result = sim2h.handle_message(&uri, payload);
+        assert_eq!(result, Err(format!("no connection for {}",&uri)));
+
+//        let result = sim2h.handle_incoming_connect(uri.clone());
+//        assert_eq!(result,Ok(true));
 
     }
 }
