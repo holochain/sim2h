@@ -7,23 +7,47 @@ pub mod wire_message;
 
 use std::{
     collections::HashMap,
-    sync::RwLock,
+    result,
 };
-use url::Url;
+use lib3h_protocol::{
+  //  types::SpaceHash,
+    uri::Lib3hUri,
+};
+use parking_lot::RwLock;
 
 use connected_agent::*;
 //use wire_message::*;
 
-
+#[allow(dead_code)]
 struct Sim2h {
-    connection_states: RwLock<HashMap<Url, ConnectedAgent>>,
-    spaces: HashMap<SpaceAddress, RwLock<HashMap<AgentId, Url>>>,
+    connection_states: RwLock<HashMap<Lib3hUri, ConnectedAgent>>,
+//    spaces: HashMap<SpaceAddress, RwLock<HashMap<AgentId, Url>>>,
 //    transport: GhostActorWebsocket<..>,
 }
 
-//self.transport.send(RequestToChild::SendMessage{ uri: other_url, payload });
+pub type Sim2hError = String;
+pub type Sim2hResult<T> = result::Result<T, Sim2hError>;
 
+#[allow(dead_code)]
 impl Sim2h {
+
+    pub fn new() -> Self {
+        Sim2h{
+            connection_states: RwLock::new(HashMap::new()),
+        }
+    }
+    fn handle_incoming_connect(&self, uri: Lib3hUri) -> Sim2hResult<bool> {
+        let _r = self.connection_states.write().insert(uri, ConnectedAgent::new());
+        /*if self.connection_states.contains(uri) {
+            self.connection_states.write().remove(uri);
+            // We got another incoming connelet maybe_uri = ction from the same
+            // remote URI?! This is strange!
+            // We should tell the transport actor to drop
+            // the connection.
+        } else {*/
+        //        }
+            Ok(true)
+    }
     /*
     fn join(&self, space, agent)
     fn leave(&self, space, agent)
@@ -31,26 +55,24 @@ impl Sim2h {
          // return Some only if in same space and joined
     }
 
+    // the message better be a join
+    fn process_limbo(agent,payload) {}
+
+    // cache messages cus we are waiting for confirmation of join
+    fn self.process_join_request(agent,payload) {}
+
     fn process_next_message(&self) {
         match transport.drain() {
             RequestToParent::ReceivedData{uri, payload} => {
                 let agent = self.connection_states.get(uri)?;
                     match agent.state {
-                        ConnectionState::Limbo => self.process_limbo(agent),
+                        ConnectionState::Limbo => self.process_limbo(agent, payload),
                         ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
                         ConnectionState::JoinedSpace(agent_id, space_address) => self.proxy(space_address, agent_id, payload),
                     }
             }
             RequestToParent::IncomingConnection{uri} => {
-                if self.connection_states.contains(uri) {
-                    self.connection_states.write().remove(uri);
-                    // We got another incoming connelet maybe_uri = ction from the same
-                    // remote URI?! This is strange!
-                    // We should tell the transport actor to drop
-                    // the connection.
-                } else {
-                    self.connection_states.write().insert(uri, ConnectedAgent::new(uri))
-                }
+                self.handle_incominng_connection(uri)?
             }
 
             RequestToParent::ConnectionClosed{uri} => {
@@ -166,10 +188,44 @@ impl Sim2h {
 
 #[cfg(test)]
 pub mod tests {
-    //use super::*;
+    use super::*;
 
     #[test]
-    pub fn test_sim2h() {
-        assert!(false);
+    pub fn test_constructor() {
+        let sim2h = Sim2h::new();
+        let reader = sim2h.connection_states.read();
+        assert_eq!(reader.len(),0)
+    }
+
+    #[test]
+    pub fn test_incomming_connection() {
+        let sim2h = Sim2h::new();
+
+        // incoming connections get added to the map in limbo
+        let uri = Lib3hUri::with_memory("addr_1");
+        let result = sim2h.handle_incoming_connect(uri.clone());
+        assert_eq!(result,Ok(true));
+
+        { // scope for the reader to be dropped
+            let reader = sim2h.connection_states.read();
+            let result = reader.get(&uri).clone();
+            assert_eq!(
+                "Some(Limbo)",
+                format!("{:?}", result)
+            );
+        }
+
+        // pretend the agent has joined the space
+        let _ = sim2h.connection_states.write().insert(uri.clone(), ConnectedAgent::JoinedSpace("fake_agent".into(),"fake_space".into()));
+        // if we get a second incoming connection, the state should be reset.
+        let result = sim2h.handle_incoming_connect(uri.clone());
+        assert_eq!(result,Ok(true));
+        let reader = sim2h.connection_states.read();
+        let result = reader.get(&uri).clone();
+        assert_eq!(
+            "Some(Limbo)",
+            format!("{:?}", result)
+        );
+
     }
 }

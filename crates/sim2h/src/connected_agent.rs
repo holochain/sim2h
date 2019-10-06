@@ -1,17 +1,21 @@
 //! represents the state of connected agents
-use lib3h_protocol::Address;
+use lib3h_protocol::{
+    Address,
+    types::SpaceHash,
+};
+
 pub type AgentId = Address;
-pub type SpaceAddress = Address;
 
 #[derive(PartialEq,Debug)]
 pub enum ConnectedAgent {
     Limbo,
-    RequestedJoiningSpace(AgentId, Address),
-    JoinedSpace(AgentId, Address),
+    RequestedJoiningSpace(AgentId, SpaceHash),
+    JoinedSpace(AgentId, SpaceHash),
 }
 
+#[allow(dead_code)]
 impl ConnectedAgent {
-    fn new() -> ConnectedAgent {
+    pub fn new() -> ConnectedAgent {
         ConnectedAgent::Limbo
     }
 }
