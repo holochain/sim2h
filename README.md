@@ -8,7 +8,7 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
-A multiplexer/tunneler for nodes using [lib3h](https://github.com/holochain/lib3h) protocol to connect vie a centralized service.
+A multiplexer for nodes using [lib3h](https://github.com/holochain/lib3h) protocol to connect through a centralized security and validation service.
 
 ## License
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
