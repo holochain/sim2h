@@ -22,9 +22,11 @@ use std::collections::HashMap;
 
 use connected_agent::*;
 pub use wire_message::WireMessage;
+use url::Url;
+use log::debug;
 
 #[allow(dead_code)]
-struct Sim2h {
+pub struct Sim2h {
     bound_uri: Option<Lib3hUri>,
     connection_states: RwLock<HashMap<Lib3hUri, ConnectedAgent>>,
     //    spaces: HashMap<SpaceAddress, RwLock<HashMap<AgentId, Url>>>,
@@ -58,6 +60,48 @@ impl Sim2h {
             }),
         );
         sim2h
+    }
+
+    pub fn with_detached_transport(transport: Detach<TransportActorParentWrapperDyn<Self>>) -> Self {
+        Sim2h {
+            bound_uri: None,
+            connection_states: RwLock::new(HashMap::new()),
+            transport,
+        }
+    }
+
+    pub fn bind_transport_sync(mut self, port: u16) -> Result<Lib3hUri, String> {
+        let url_string = format!("wss://localhost:{}", port);
+        let url = Url::parse(&url_string).expect("can parse url");
+        debug!("Trying to bind to {}...", url_string);
+
+        // channel for making an async call sync
+        let (tx, rx) = crossbeam_channel::unbounded();
+        self.transport.request(
+            Span::todo("Find out how to use spans the right way"),
+            RequestToChild::Bind {
+                spec: url.into(),
+            },
+            // callback just notifies channel so
+            Box::new(move |_owner, response| {
+                let result = match response {
+                    GhostCallbackData::Timeout(bt) => Err(format!("Bind timed out. Backtrace: {:?}", bt)),
+                    GhostCallbackData::Response(Ok(RequestToChildResponse::Bind(bind_result_data))) =>
+                        Ok(bind_result_data.bound_url),
+                    GhostCallbackData::Response(Err(transport_error)) =>
+                        Err(format!("Error during bind: {:?}", transport_error)),
+                    _ => Err(String::from("Got unexpected response from transport actor during bind")),
+                };
+                let _ = tx.send(result);
+                Ok(())
+            }),
+        ).map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
+
+        for _ in 1..3 {
+            detach_run!(&mut self.transport, |t| t.process(&mut self)).map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
+        }
+
+        rx.recv().expect("local channel to work")
     }
 
     // adds an agent to a space
