@@ -21,7 +21,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 
 use connected_agent::*;
-use wire_message::WireMessage;
+pub use wire_message::WireMessage;
 
 #[allow(dead_code)]
 struct Sim2h {
