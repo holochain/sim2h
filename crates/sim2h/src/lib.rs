@@ -24,12 +24,13 @@ use connected_agent::*;
 pub use wire_message::WireMessage;
 use url::Url;
 use log::{debug, error, warn};
+use lib3h_protocol::data_types::StoreEntryAspectData;
 
 #[allow(dead_code)]
 pub struct Sim2h {
     bound_uri: Option<Lib3hUri>,
     connection_states: RwLock<HashMap<Lib3hUri, ConnectedAgent>>,
-    //    spaces: HashMap<SpaceAddress, RwLock<HashMap<AgentId, Url>>>,
+    spaces: HashMap<SpaceHash, RwLock<HashMap<AgentId, Lib3hUri>>>,
     transport: Detach<TransportActorParentWrapperDyn<Self>>,
 }
 
@@ -41,6 +42,7 @@ impl Sim2h {
         let mut sim2h = Sim2h {
             bound_uri: None,
             connection_states: RwLock::new(HashMap::new()),
+            spaces: HashMap::new(),
             transport: t,
         };
 
@@ -66,6 +68,7 @@ impl Sim2h {
         Sim2h {
             bound_uri: None,
             connection_states: RwLock::new(HashMap::new()),
+            spaces: HashMap::new(),
             transport,
         }
     }
@@ -105,12 +108,16 @@ impl Sim2h {
     }
 
     // adds an agent to a space
-    fn join(&self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
+    fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
         if let Some(ConnectedAgent::Limbo) = self.get_connection(uri) {
             let _ = self.connection_states.write().insert(
                 uri.clone(),
                 ConnectedAgent::JoinedSpace(data.space_address.clone(), data.agent_id.clone()),
             );
+            if !self.spaces.contains_key(&data.space_address) {
+                self.spaces.insert(data.space_address.clone(), RwLock::new(HashMap::new()));
+            }
+            self.spaces.get(&data.space_address).unwrap().write().insert(data.agent_id.clone(), uri.clone());
             debug!("Agent {:?} joined space {:?}", data.agent_id, data.space_address);
             Ok(())
         } else {
@@ -245,7 +252,7 @@ impl Sim2h {
 
     // given an incoming messages, prepare a proxy message and whether it's an publish or request
     fn prepare_proxy(
-        &self,
+        &mut self,
         uri: &Lib3hUri,
         space_address: &SpaceHash,
         agent_id: &AgentId,
@@ -276,6 +283,23 @@ impl Sim2h {
                     to_url,
                     WireMessage::Lib3hToClient(Lib3hToClient::HandleSendDirectMessage(dm_data)),
                 )))
+            }
+            WireMessage::ClientToLib3h(ClientToLib3h::PublishEntry(data)) => {
+                debug!("Got Publish - broadcasting all aspects to all agents...");
+                for aspect in data.entry.aspect_list {
+                    let store_message = WireMessage::Lib3hToClient(
+                        Lib3hToClient::HandleStoreEntryAspect(StoreEntryAspectData {
+                            request_id: "".into(),
+                            space_address: data.space_address.clone(),
+                            provider_agent_id: data.provider_agent_id.clone(),
+                            entry_address: data.entry.entry_address.clone(),
+                            entry_aspect: aspect,
+                    }));
+                    if let Err(e) = self.broadcast(data.space_address.clone(), &store_message) {
+                        error!("Error during broadcast: {:?}", e);
+                    }
+                }
+                Ok(None)
             }
             _ => {
                 warn!("Ignoring unimplemented message");
@@ -384,14 +408,33 @@ impl Sim2h {
             }
 
         }
+*/
+    fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage) -> Result<(), String>{
+        debug!("Broadcast in space: {:?}", space);
+        for uri in self.spaces.get(&space).ok_or("No such space")?.read().values().cloned() {
+            debug!("Broadcast: Sending to {:?}", uri);
+            let send_result = self.transport
+                .request(
+                    Span::fixme(),
+                    RequestToChild::SendMessage { uri, payload: msg.clone().into() },
+                    Box::new(|_me, response| match response {
+                        GhostCallbackData::Response(Ok(
+                                                        RequestToChildResponse::SendMessageSuccess,
+                                                    )) => Ok(()),
+                        GhostCallbackData::Response(Err(e)) => Err(e.into()),
+                        GhostCallbackData::Timeout(bt) => {
+                            Err(format!("timeout: {:?}", bt).into())
+                        }
+                        _ => Err("bad response type".into()),
+                    }),
+                );
 
-        fn broadcast(&self, space: Address, msg: WireMessage) {
-            let payload: Opaque = msg.into();
-            for (uri) self.spaces.get(space)?.read().values() {
-                self.transport.send(RequestToChild::SendMessage{ uri, payload: payload.clone() });
+            if let Err(e) = send_result {
+                error!("GhostError during broadcast send: {:?}", e)
             }
         }
-    */
+        Ok(())
+    }
 }
 
 #[cfg(test)]
