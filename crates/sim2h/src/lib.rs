@@ -18,7 +18,7 @@ use lib3h_protocol::{data_types::SpaceData, protocol::*, types::SpaceHash, uri::
 use lib3h_zombie_actor::prelude::*;
 
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::{convert::TryFrom, collections::HashMap};
 
 use connected_agent::*;
 pub use wire_message::WireMessage;
@@ -214,6 +214,30 @@ impl Sim2h {
 
     pub fn process(&mut self) -> Sim2hResult<()> {
         detach_run!(&mut self.transport, |t| t.process(self)).map_err(|e| format!("{:?}", e))?;
+        for mut transport_message in self.transport.drain_messages() {
+            match transport_message.take_message().expect("GhostMessage must have a message") {
+                RequestToParent::ReceivedData {uri, payload} => {
+                    match WireMessage::try_from(&payload) {
+                        Ok(wire_message) =>
+                            if let Err(error) = self.handle_message(&uri, wire_message) {
+                                error!("Error handling message: {:?}", error);
+                            },
+                        Err(error) =>
+                            error!(
+                                "Could not deserialize received payload into WireMessage!\nError: {:?}\nPayload was: {:?}",
+                                error,
+                                payload
+                            )
+                    }
+                }
+                RequestToParent::IncomingConnection {uri} =>
+                    if let Err(error) = self.handle_incoming_connect(uri) {
+                        error!("Error handling incomming connection: {:?}", error);
+                    },
+                RequestToParent::ErrorOccured {uri, error} =>
+                    error!("Transport error occured on connection to {:?}: {:?}", uri, error),
+            }
+        }
         Ok(())
     }
 
