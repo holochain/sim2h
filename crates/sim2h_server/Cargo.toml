@@ -17,3 +17,4 @@ lib3h = { git = "https://github.com/holochain/lib3h", branch = "201910/version-0
 lib3h_protocol = { git = "https://github.com/holochain/lib3h", branch = "201910/version-0.0.11" }
 detach = { git = "https://github.com/holochain/lib3h", branch = "201910/version-0.0.11" }
 log = "0.4.8"
+env_logger = "0.7.0"

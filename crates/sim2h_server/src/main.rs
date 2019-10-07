@@ -21,6 +21,7 @@ fn create_websocket_transport() -> Detach<TransportActorParentWrapperDyn<Sim2h>>
 
 
 fn main() {
+    env_logger::init();
     let transport = create_websocket_transport();
     let mut sim2h = Sim2h::with_detached_transport(transport);
     match sim2h.bind_transport_sync(9000) {
