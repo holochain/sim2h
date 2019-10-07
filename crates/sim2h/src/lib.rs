@@ -119,7 +119,7 @@ impl Sim2h {
         space_address: &SpaceHash,
         agent_id: &AgentId,
         message: WireMessage,
-    ) -> Sim2hResult<Option<(bool, WireMessage)>> {
+    ) -> Sim2hResult<Option<(bool, Lib3hUri, WireMessage)>> {
         match message {
             // -- Space -- //
             WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => {
@@ -138,11 +138,12 @@ impl Sim2h {
                 {
                     return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
-                let _other_url = self
+                let to_url = self
                     .lookup_joined(space_address, &dm_data.to_agent_id)
                     .ok_or_else(|| format!("unvalidated proxy agent {}", &dm_data.to_agent_id))?;
                 Ok(Some((
                     true,
+                    to_url,
                     WireMessage::Lib3hToClient(Lib3hToClient::HandleSendDirectMessage(dm_data)),
                 )))
                 /*
@@ -470,7 +471,7 @@ pub mod tests {
 
         let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
         assert_eq!(
-            "Ok(Some((true, Lib3hToClient(HandleSendDirectMessage(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"fake_to_agent_id\"), from_agent_id: HashString(\"fake_agent_id\"), content: \"foo\" })))))",
+            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(HandleSendDirectMessage(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"fake_to_agent_id\"), from_agent_id: HashString(\"fake_agent_id\"), content: \"foo\" })))))",
             format!("{:?}", result)
         );
 
