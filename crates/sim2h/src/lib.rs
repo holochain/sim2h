@@ -70,7 +70,7 @@ impl Sim2h {
         }
     }
 
-    pub fn bind_transport_sync(mut self, port: u16) -> Result<Lib3hUri, String> {
+    pub fn bind_transport_sync(&mut self, port: u16) -> Result<Lib3hUri, String> {
         let url_string = format!("wss://localhost:{}", port);
         let url = Url::parse(&url_string).expect("can parse url");
         debug!("Trying to bind to {}...", url_string);
@@ -98,7 +98,7 @@ impl Sim2h {
         ).map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
 
         for _ in 1..3 {
-            detach_run!(&mut self.transport, |t| t.process(&mut self)).map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
+            detach_run!(&mut self.transport, |t| t.process(self)).map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
         }
 
         rx.recv().expect("local channel to work")
@@ -212,7 +212,7 @@ impl Sim2h {
         }
     }
 
-    fn process(&mut self) -> Sim2hResult<()> {
+    pub fn process(&mut self) -> Sim2hResult<()> {
         detach_run!(&mut self.transport, |t| t.process(self)).map_err(|e| format!("{:?}", e))?;
         Ok(())
     }
