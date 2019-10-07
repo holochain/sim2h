@@ -138,7 +138,7 @@ impl Sim2h {
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
                 {
                     if is_request {
-                        let payload = serde_json::to_string(&message).expect("wiremessage should serialize").into();
+                        let payload = message.into();
                         self.transport
                             .request(
                                 Span::fixme(),
