@@ -4,8 +4,10 @@ extern crate log;
 #[macro_use]
 extern crate detach;
 pub mod connected_agent;
+pub mod error;
 pub mod wire_message;
 
+use crate::error::*;
 use detach::prelude::*;
 use holochain_tracing::Span;
 use lib3h::transport::protocol::*;
@@ -13,7 +15,7 @@ use lib3h_protocol::{data_types::SpaceData, protocol::*, types::SpaceHash, uri::
 use lib3h_zombie_actor::prelude::*;
 
 use parking_lot::RwLock;
-use std::{collections::HashMap, result};
+use std::collections::HashMap;
 
 use connected_agent::*;
 use wire_message::WireMessage;
@@ -25,11 +27,6 @@ struct Sim2h {
     //    spaces: HashMap<SpaceAddress, RwLock<HashMap<AgentId, Url>>>,
     transport: Detach<TransportActorParentWrapperDyn<Self>>,
 }
-
-pub type Sim2hError = String;
-pub type Sim2hResult<T> = result::Result<T, Sim2hError>;
-
-const SPACE_MISMATCH_ERR_STR: &str = "space/agent id mismatch";
 
 #[allow(dead_code)]
 impl Sim2h {
@@ -69,7 +66,7 @@ impl Sim2h {
             );
             Ok(())
         } else {
-            Err(format!("no agent found in limbo at {} ", uri))
+            Err(format!("no agent found in limbo at {} ", uri).into())
         }
     }
 
@@ -84,7 +81,7 @@ impl Sim2h {
                 Ok(())
             }
         } else {
-            Err(format!("no joined agent found at {} ", &uri))
+            Err(format!("no joined agent found at {} ", &uri).into())
         }
     }
 
@@ -129,7 +126,7 @@ impl Sim2h {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
                     self.join(uri, &data)
                 } else {
-                    Err(format!("no agent validated at {} ", uri))
+                    Err(format!("no agent validated at {} ", uri).into())
                 }
             }
             //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
@@ -156,7 +153,7 @@ impl Sim2h {
                                     _ => Err("bad response type".into()),
                                 }),
                             )
-                            .map_err(|e| e.to_string())
+                            .map_err(|e| e.into())
                     } else {
                         unimplemented!()
                     }
@@ -183,9 +180,7 @@ impl Sim2h {
         match message {
             // -- Space -- //
             WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => {
-                Err(
-                    "join message should have been processed elsewhere and can't be proxied".into(),
-                )
+                Err("join message should have been processed elsewhere and can't be proxied".into())
             }
             WireMessage::ClientToLib3h(ClientToLib3h::LeaveSpace(data)) => {
                 self.leave(uri, &data).map(|_| None)
@@ -437,7 +432,10 @@ pub mod tests {
         let data = make_test_space_data();
         // you can't join if you aren't in limbo
         let result = sim2h.join(&uri, &data);
-        assert_eq!(result, Err(format!("no agent found in limbo at {} ", &uri)));
+        assert_eq!(
+            result,
+            Err(format!("no agent found in limbo at {} ", &uri).into())
+        );
 
         // but you can if you are  TODO: real membrane check
         let _result = sim2h.handle_incoming_connect(uri.clone());
@@ -462,10 +460,16 @@ pub mod tests {
 
         // leaving a space not joined should produce an error
         let result = sim2h.leave(&uri, &data);
-        assert_eq!(result, Err(format!("no joined agent found at {} ", &uri)));
+        assert_eq!(
+            result,
+            Err(format!("no joined agent found at {} ", &uri).into())
+        );
         let _result = sim2h.handle_incoming_connect(uri.clone());
         let result = sim2h.leave(&uri, &data);
-        assert_eq!(result, Err(format!("no joined agent found at {} ", &uri)));
+        assert_eq!(
+            result,
+            Err(format!("no joined agent found at {} ", &uri).into())
+        );
 
         let _result = sim2h.join(&uri, &data);
 
@@ -505,15 +509,15 @@ pub mod tests {
             &"fake_other_agent".into(),
             message,
         );
-        assert_eq!("Err(\"space/agent id mismatch\")", format!("{:?}", result));
+        assert_eq!(Err("space/agent id mismatch".into()), result);
 
         // you can't proxy to someone not in the space
         let message = make_test_dm_message();
         let result =
             sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message.clone());
         assert_eq!(
-            "Err(\"unvalidated proxy agent fake_to_agent_id\")",
-            format!("{:?}", result)
+            Err("unvalidated proxy agent fake_to_agent_id".into()),
+            result,
         );
 
         // proxy a dm message
@@ -545,12 +549,15 @@ pub mod tests {
 
         // a message from an unconnected agent should return an error
         let result = sim2h.handle_message(&uri, make_test_err_message());
-        assert_eq!(result, Err(format!("no connection for {}", &uri)));
+        assert_eq!(result, Err(format!("no connection for {}", &uri).into()));
 
         // a non-join message from an unvalidated but connected agent should return an error
         let _result = sim2h.handle_incoming_connect(uri.clone());
         let result = sim2h.handle_message(&uri, make_test_err_message());
-        assert_eq!(result, Err(format!("no agent validated at {} ", &uri)));
+        assert_eq!(
+            result,
+            Err(format!("no agent validated at {} ", &uri).into())
+        );
 
         // a valid join message from a connected agent should update its connection status
         let result = sim2h.handle_message(&uri, make_test_join_message());
