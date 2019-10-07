@@ -1,4 +1,4 @@
-//! encapsulates lib3h gostmessage for sim2h including security challenge
+//! encapsulates lib3h ghostmessage for sim2h including security challenge
 use lib3h_protocol::protocol::*;
 
 pub type Sim2hWireError = String;

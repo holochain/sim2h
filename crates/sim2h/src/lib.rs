@@ -22,6 +22,8 @@ struct Sim2h {
 pub type Sim2hError = String;
 pub type Sim2hResult<T> = result::Result<T, Sim2hError>;
 
+const SPACE_MISMATCH_ERR_STR: &str = "space/agent id mismatch";
+
 #[allow(dead_code)]
 impl Sim2h {
     pub fn new() -> Self {
@@ -40,6 +42,21 @@ impl Sim2h {
             Ok(())
         } else {
             Err(format!("no agent found in limbo at {} ", uri))
+        }
+    }
+
+    // removes an agent from a space
+    fn leave(&self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
+        if let Some(ConnectedAgent::JoinedSpace(space_address, agent_id)) = self.get_connection(uri)
+        {
+            if (data.agent_id != agent_id) || (data.space_address != space_address) {
+                Err(SPACE_MISMATCH_ERR_STR.into())
+            } else {
+                self.connection_states.write().remove(uri).unwrap();
+                Ok(())
+            }
+        } else {
+            Err(format!("no joined agent found at {} ", &uri))
         }
     }
 
@@ -89,7 +106,7 @@ impl Sim2h {
             }
             //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
             ConnectedAgent::JoinedSpace(space_address, agent_id) => {
-                let _ = self.prepare_proxy(&space_address, &agent_id, message)?;
+                let _ = self.prepare_proxy(uri, &space_address, &agent_id, message)?;
                 Ok(())
             }
         }
@@ -98,10 +115,11 @@ impl Sim2h {
     // given an incoming messages, prepare a proxy message and whether it's an publish or request
     fn prepare_proxy(
         &self,
+        uri: &Lib3hUri,
         space_address: &SpaceHash,
         agent_id: &AgentId,
         message: WireMessage,
-    ) -> Sim2hResult<(bool, WireMessage)> {
+    ) -> Sim2hResult<Option<(bool, WireMessage)>> {
         match message {
             // -- Space -- //
             WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => {
@@ -109,21 +127,24 @@ impl Sim2h {
                     "join message should have been processed elsewhere and can't be proxied".into(),
                 );
             }
+            WireMessage::ClientToLib3h(ClientToLib3h::LeaveSpace(data)) => {
+                self.leave(uri, &data).map(|_| None)
+            }
 
             // -- Direct Messaging -- //
             // Send a message directly to another agent on the network
             WireMessage::ClientToLib3h(ClientToLib3h::SendDirectMessage(dm_data)) => {
                 if (dm_data.from_agent_id != *agent_id) || (dm_data.space_address != *space_address)
                 {
-                    return Err("space/agent id mismatch".into());
+                    return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
                 let _other_url = self
                     .lookup_joined(space_address, &dm_data.to_agent_id)
                     .ok_or_else(|| format!("unvalidated proxy agent {}", &dm_data.to_agent_id))?;
-                Ok((
+                Ok(Some((
                     true,
                     WireMessage::Lib3hToClient(Lib3hToClient::HandleSendDirectMessage(dm_data)),
-                ))
+                )))
                 /*
                  let payload = .into();
                  self.transport.send(RequestToChild::SendMessage{ uri: other_url, payload });
@@ -134,11 +155,6 @@ impl Sim2h {
     }
 
     /*
-        fn leave(&self, space, agent)
-        fn lookup_joined(&self, space, agent) -> Option<Url> {
-             // return Some only if in same space and joined
-        }
-
         // the message better be a join
         fn process_limbo(agent,payload) {}
 
@@ -253,11 +269,15 @@ pub mod tests {
     use super::*;
     use lib3h_protocol::data_types::*;
 
+    fn make_test_agent() -> AgentId {
+        "fake_agent_id".into()
+    }
+
     fn make_test_space_data() -> SpaceData {
         SpaceData {
             request_id: "".into(),
             space_address: "fake_space_address".into(),
-            agent_id: "fake_agent_id".into(),
+            agent_id: make_test_agent(),
         }
     }
 
@@ -277,11 +297,15 @@ pub mod tests {
         WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(space_data))
     }
 
+    fn make_test_leave_message() -> WireMessage {
+        WireMessage::ClientToLib3h(ClientToLib3h::LeaveSpace(make_test_space_data()))
+    }
+
     fn make_test_dm_data() -> DirectMessageData {
         DirectMessageData {
             request_id: "".into(),
             space_address: "fake_space_address".into(),
-            from_agent_id: "fake_agent_id".into(),
+            from_agent_id: make_test_agent(),
             to_agent_id: "fake_to_agent_id".into(),
             content: "foo".into(),
         }
@@ -352,6 +376,34 @@ pub mod tests {
     }
 
     #[test]
+    pub fn test_leave() {
+        let sim2h = Sim2h::new();
+        let uri = Lib3hUri::with_memory("addr_1");
+        let mut data = make_test_space_data();
+
+        // leaving a space not joined should produce an error
+        let result = sim2h.leave(&uri, &data);
+        assert_eq!(result, Err(format!("no joined agent found at {} ", &uri)));
+        let _result = sim2h.handle_incoming_connect(uri.clone());
+        let result = sim2h.leave(&uri, &data);
+        assert_eq!(result, Err(format!("no joined agent found at {} ", &uri)));
+
+        let _result = sim2h.join(&uri, &data);
+
+        // a leave on behalf of someone else should fail
+        data.agent_id = "someone_else_agent_id".into();
+        let result = sim2h.leave(&uri, &data);
+        assert_eq!(result, Err(SPACE_MISMATCH_ERR_STR.into()));
+
+        // a valid leave should work
+        data.agent_id = make_test_agent();
+        let result = sim2h.leave(&uri, &data);
+        assert_eq!(result, Ok(()));
+        let result = sim2h.get_connection(&uri).clone();
+        assert_eq!(result, None);
+    }
+
+    #[test]
     pub fn test_message() {
         let sim2h = Sim2h::new();
         let uri = Lib3hUri::with_memory("addr_1");
@@ -379,22 +431,31 @@ pub mod tests {
     pub fn test_prepare_proxy() {
         let sim2h = Sim2h::new();
 
+        let uri = Lib3hUri::with_memory("addr_1");
+        let _ = sim2h.handle_incoming_connect(uri.clone());
+        let _ = sim2h.join(&uri, &make_test_space_data());
         let message = make_test_join_message();
         let data = make_test_space_data();
 
         // you can't proxy a join message
-        let result = sim2h.prepare_proxy(&data.space_address, &data.agent_id, message);
+        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
         assert!(result.is_err());
 
         // you can't proxy for someone else, i.e. the message contents must match the
         // space joined
         let message = make_test_dm_message();
-        let result = sim2h.prepare_proxy(&data.space_address, &"fake_other_agent".into(), message);
+        let result = sim2h.prepare_proxy(
+            &uri,
+            &data.space_address,
+            &"fake_other_agent".into(),
+            message,
+        );
         assert_eq!("Err(\"space/agent id mismatch\")", format!("{:?}", result));
 
         // you can't proxy to someone not in the space
         let message = make_test_dm_message();
-        let result = sim2h.prepare_proxy(&data.space_address, &data.agent_id, message.clone());
+        let result =
+            sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message.clone());
         assert_eq!(
             "Err(\"unvalidated proxy agent fake_to_agent_id\")",
             format!("{:?}", result)
@@ -403,14 +464,21 @@ pub mod tests {
         // proxy a dm message
         // first we have to setup the to agent in the space
         let to_agent_data = make_test_space_data_with_agent("fake_to_agent_id".into());
-        let uri = Lib3hUri::with_memory("addr_1");
-        let _ = sim2h.handle_incoming_connect(uri.clone());
-        let _ = sim2h.join(&uri, &to_agent_data);
+        let to_uri = Lib3hUri::with_memory("addr_2");
+        let _ = sim2h.handle_incoming_connect(to_uri.clone());
+        let _ = sim2h.join(&to_uri, &to_agent_data);
 
-        let result = sim2h.prepare_proxy(&data.space_address, &data.agent_id, message);
+        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
         assert_eq!(
-            "Ok((true, Lib3hToClient(HandleSendDirectMessage(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"fake_to_agent_id\"), from_agent_id: HashString(\"fake_agent_id\"), content: \"foo\" }))))",
+            "Ok(Some((true, Lib3hToClient(HandleSendDirectMessage(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"fake_to_agent_id\"), from_agent_id: HashString(\"fake_agent_id\"), content: \"foo\" })))))",
             format!("{:?}", result)
         );
+
+        // proxy a leave space message should remove the agent from the space
+        let message = make_test_leave_message();
+        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
+        assert_eq!("Ok(None)", format!("{:?}", result));
+        let result = sim2h.get_connection(&uri).clone();
+        assert_eq!(result, None);
     }
 }
