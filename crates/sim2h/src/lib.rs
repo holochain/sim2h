@@ -183,9 +183,9 @@ impl Sim2h {
         match message {
             // -- Space -- //
             WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => {
-                return Err(
+                Err(
                     "join message should have been processed elsewhere and can't be proxied".into(),
-                );
+                )
             }
             WireMessage::ClientToLib3h(ClientToLib3h::LeaveSpace(data)) => {
                 self.leave(uri, &data).map(|_| None)
@@ -562,23 +562,24 @@ pub mod tests {
         );
 
         // dm
-        // first we have to setup the to agent on the network and in the space
-        let to_agent_data = make_test_space_data_with_agent("fake_to_agent_id".into());
+        // first we have to setup the to agent on the in-memory-network and in the space
         let network = {
             let mut verse = get_memory_verse();
             verse.get_network(netname)
         };
         let to_uri = network.lock().unwrap().bind();
         let _ = sim2h.handle_incoming_connect(to_uri.clone());
+        let to_agent_data = make_test_space_data_with_agent("fake_to_agent_id".into());
         let _ = sim2h.join(&to_uri, &to_agent_data);
 
+        // then we can make a message and handle it.
         let message = make_test_dm_message();
         let result = sim2h.handle_message(&uri, message);
         assert_eq!(result, Ok(()));
 
+        // which should result in showing up in the to_uri's inbox in the in-memory netowrk
         let result = sim2h.process();
         assert_eq!(result, Ok(()));
-
         let mut reader = network.lock().unwrap();
         let server = reader.get_server(&to_uri);
         assert_eq!(
