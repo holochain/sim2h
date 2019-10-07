@@ -592,9 +592,17 @@ pub mod tests {
         let result = sim2h.process();
         assert_eq!(result, Ok(()));
         let mut reader = network.lock().unwrap();
-        let server = reader.get_server(&to_uri);
-        assert_eq!(
-            "Some(MemoryServer { this_uri: Lib3hUri(\"mem://addr_1/\"), inbox_map: {Lib3hUri(\"mem://addr_2/\"): [[123, 34, 76, 105, 98, 51, 104, 84, 111, 67, 108, 105, 101, 110, 116, 34, 58, 123, 34, 72, 97, 110, 100, 108, 101, 83, 101, 110, 100, 68, 105, 114, 101, 99, 116, 77, 101, 115, 115, 97, 103, 101, 34, 58, 123, 34, 115, 112, 97, 99, 101, 95, 97, 100, 100, 114, 101, 115, 115, 34, 58, 34, 102, 97, 107, 101, 95, 115, 112, 97, 99, 101, 95, 97, 100, 100, 114, 101, 115, 115, 34, 44, 34, 114, 101, 113, 117, 101, 115, 116, 95, 105, 100, 34, 58, 34, 34, 44, 34, 116, 111, 95, 97, 103, 101, 110, 116, 95, 105, 100, 34, 58, 34, 102, 97, 107, 101, 95, 116, 111, 95, 97, 103, 101, 110, 116, 95, 105, 100, 34, 44, 34, 102, 114, 111, 109, 95, 97, 103, 101, 110, 116, 95, 105, 100, 34, 58, 34, 102, 97, 107, 101, 95, 97, 103, 101, 110, 116, 95, 105, 100, 34, 44, 34, 99, 111, 110, 116, 101, 110, 116, 34, 58, 34, 90, 109, 57, 118, 34, 125, 125, 125]]}, connection_inbox: [(Lib3hUri(\"mem://addr_2/\"), true)], state: Running })",
-            format!("{:?}", server))
+        let server = reader
+            .get_server(&to_uri)
+            .expect("there should be a server for to_uri");
+        if let Ok((did_work, events)) = server.process() {
+            assert!(did_work);
+            let dm = &events[1];
+            assert_eq!(
+                "ReceivedData(Lib3hUri(\"mem://addr_2/\"), \"{\\\"Lib3hToClient\\\":{\\\"HandleSendDirectMessage\\\":{\\\"space_address\\\":\\\"fake_space_address\\\",\\\"request_id\\\":\\\"\\\",\\\"to_agent_id\\\":\\\"fake_to_agent_id\\\",\\\"from_agent_id\\\":\\\"fake_agent_id\\\",\\\"content\\\":\\\"Zm9v\\\"}}}\")",
+                format!("{:?}", dm))
+        } else {
+            assert!(false)
+        }
     }
 }
