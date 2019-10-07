@@ -33,6 +33,14 @@ impl TryFrom<Opaque> for WireMessage {
     }
 }
 
+impl TryFrom<&Opaque> for WireMessage {
+    type Error = Sim2hWireError;
+    fn try_from(message: &Opaque) -> Result<Self, Self::Error> {
+        Ok(serde_json::from_str(&String::from_utf8_lossy(message))
+            .map_err(|e| format!("{:?}", e))?)
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
