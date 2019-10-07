@@ -36,7 +36,6 @@ impl TryFrom<Opaque> for WireMessage {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    //    use std::convert::Try;
 
     #[test]
     pub fn test_wire_message() {
