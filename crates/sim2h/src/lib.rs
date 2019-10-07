@@ -3,6 +3,9 @@ extern crate env_logger;
 extern crate log;
 #[macro_use]
 extern crate detach;
+#[macro_use]
+extern crate serde;
+
 pub mod connected_agent;
 pub mod error;
 pub mod wire_message;
@@ -131,16 +134,17 @@ impl Sim2h {
             }
             //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
             ConnectedAgent::JoinedSpace(space_address, agent_id) => {
-                if let Some((is_request, to_uri, _message)) =
+                if let Some((is_request, to_uri, message)) =
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
                 {
                     if is_request {
+                        let payload = serde_json::to_string(&message).expect("wiremessage should serialize").into();
                         self.transport
                             .request(
                                 Span::fixme(),
                                 RequestToChild::SendMessage {
                                     uri: to_uri,
-                                    payload: "message".into(), //TODO this needs to be serialzed wiremessage
+                                    payload,
                                 },
                                 Box::new(|_me, response| match response {
                                     GhostCallbackData::Response(Ok(
@@ -590,7 +594,7 @@ pub mod tests {
         let mut reader = network.lock().unwrap();
         let server = reader.get_server(&to_uri);
         assert_eq!(
-            "Some(MemoryServer { this_uri: Lib3hUri(\"mem://addr_1/\"), inbox_map: {Lib3hUri(\"mem://addr_2/\"): [[109, 101, 115, 115, 97, 103, 101]]}, connection_inbox: [(Lib3hUri(\"mem://addr_2/\"), true)], state: Running })",
+            "Some(MemoryServer { this_uri: Lib3hUri(\"mem://addr_1/\"), inbox_map: {Lib3hUri(\"mem://addr_2/\"): [[123, 34, 76, 105, 98, 51, 104, 84, 111, 67, 108, 105, 101, 110, 116, 34, 58, 123, 34, 72, 97, 110, 100, 108, 101, 83, 101, 110, 100, 68, 105, 114, 101, 99, 116, 77, 101, 115, 115, 97, 103, 101, 34, 58, 123, 34, 115, 112, 97, 99, 101, 95, 97, 100, 100, 114, 101, 115, 115, 34, 58, 34, 102, 97, 107, 101, 95, 115, 112, 97, 99, 101, 95, 97, 100, 100, 114, 101, 115, 115, 34, 44, 34, 114, 101, 113, 117, 101, 115, 116, 95, 105, 100, 34, 58, 34, 34, 44, 34, 116, 111, 95, 97, 103, 101, 110, 116, 95, 105, 100, 34, 58, 34, 102, 97, 107, 101, 95, 116, 111, 95, 97, 103, 101, 110, 116, 95, 105, 100, 34, 44, 34, 102, 114, 111, 109, 95, 97, 103, 101, 110, 116, 95, 105, 100, 34, 58, 34, 102, 97, 107, 101, 95, 97, 103, 101, 110, 116, 95, 105, 100, 34, 44, 34, 99, 111, 110, 116, 101, 110, 116, 34, 58, 34, 90, 109, 57, 118, 34, 125, 125, 125]]}, connection_inbox: [(Lib3hUri(\"mem://addr_2/\"), true)], state: Running })",
             format!("{:?}", server))
     }
 }
