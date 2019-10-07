@@ -23,7 +23,7 @@ use std::{convert::TryFrom, collections::HashMap};
 use connected_agent::*;
 pub use wire_message::WireMessage;
 use url::Url;
-use log::debug;
+use log::{debug, error, warn};
 
 #[allow(dead_code)]
 pub struct Sim2h {
@@ -111,6 +111,7 @@ impl Sim2h {
                 uri.clone(),
                 ConnectedAgent::JoinedSpace(data.space_address.clone(), data.agent_id.clone()),
             );
+            debug!("Agent {:?} joined space {:?}", data.agent_id, data.space_address);
             Ok(())
         } else {
             Err(format!("no agent found in limbo at {} ", uri).into())
@@ -153,6 +154,7 @@ impl Sim2h {
 
     // handler for incoming connections
     fn handle_incoming_connect(&self, uri: Lib3hUri) -> Sim2hResult<bool> {
+        debug!("New connection from {:?}", uri);
         if let Some(_old) = self
             .connection_states
             .write()
@@ -249,6 +251,7 @@ impl Sim2h {
         agent_id: &AgentId,
         message: WireMessage,
     ) -> Sim2hResult<Option<(bool, Lib3hUri, WireMessage)>> {
+        debug!("Handling message from agent {:?}: {:?}", agent_id, message);
         match message {
             // -- Space -- //
             WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => {
@@ -274,7 +277,10 @@ impl Sim2h {
                     WireMessage::Lib3hToClient(Lib3hToClient::HandleSendDirectMessage(dm_data)),
                 )))
             }
-            _ => unimplemented!(),
+            _ => {
+                warn!("Ignoring unimplemented message");
+                Err("Message not implemented".into())
+            },
         }
     }
 
