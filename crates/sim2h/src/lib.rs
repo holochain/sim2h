@@ -21,7 +21,7 @@ use parking_lot::RwLock;
 use std::{collections::HashMap, convert::TryFrom};
 
 use connected_agent::*;
-use lib3h_protocol::data_types::{StoreEntryAspectData, FetchEntryData, Opaque, GetListData};
+use lib3h_protocol::data_types::{StoreEntryAspectData, FetchEntryData, Opaque, GetListData, EntryData};
 use log::{debug, error, warn};
 use url::Url;
 pub use wire_message::WireMessage;
@@ -460,29 +460,7 @@ impl Sim2h {
                 if (data.provider_agent_id != *agent_id) || (data.space_address != *space_address) {
                     return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
-                debug!("Got Publish - broadcasting all aspects to all agents...");
-                for aspect in data.entry.aspect_list {
-                    self.spaces
-                        .get(space_address)
-                        .expect("This function should not get called if we don't have this space")
-                        .write()
-                        .add_aspect(
-                            data.entry.entry_address.clone(),
-                            aspect.aspect_address.clone(),
-                        );
-                    let store_message = WireMessage::Lib3hToClient(
-                        Lib3hToClient::HandleStoreEntryAspect(StoreEntryAspectData {
-                            request_id: "".into(),
-                            space_address: data.space_address.clone(),
-                            provider_agent_id: data.provider_agent_id.clone(),
-                            entry_address: data.entry.entry_address.clone(),
-                            entry_aspect: aspect,
-                        }),
-                    );
-                    if let Err(e) = self.broadcast(data.space_address.clone(), &store_message) {
-                        error!("Error during broadcast: {:?}", e);
-                    }
-                }
+                self.handle_new_entry_data(data.entry, space_address.clone(), agent_id.clone());
                 Ok(None)
             }
             WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetAuthoringEntryListResult(list_data)) => {
@@ -510,6 +488,14 @@ impl Sim2h {
                         self.send(uri.clone(), wire_message.into());
                     }
                 }
+                Ok(None)
+            }
+            WireMessage::Lib3hToClientResponse(
+                Lib3hToClientResponse::HandleFetchEntryResult(fetch_result)) => {
+                if (fetch_result.provider_agent_id != *agent_id) || (fetch_result.space_address != *space_address) {
+                    return Err(SPACE_MISMATCH_ERR_STR.into());
+                }
+                self.handle_new_entry_data(fetch_result.entry, space_address.clone(), agent_id.clone());
                 Ok(None)
             }
             _ => {
@@ -592,6 +578,41 @@ impl Sim2h {
 
             }
     */
+
+    fn handle_new_entry_data(
+        &mut self,
+        entry_data: EntryData,
+        space_address: SpaceHash,
+        provider: Address
+    ) {
+        debug!("Got new entry data - broadcasting all aspects to all agents...");
+        for aspect in entry_data.aspect_list {
+            // 1. Add hashes to our global list of all aspects in this space:
+            self.spaces
+                .get(&space_address)
+                .expect("This function should not get called if we don't have this space")
+                .write()
+                .add_aspect(
+                    entry_data.entry_address.clone(),
+                    aspect.aspect_address.clone(),
+                );
+            // 2. Create store message
+            let store_message = WireMessage::Lib3hToClient(
+                Lib3hToClient::HandleStoreEntryAspect(StoreEntryAspectData {
+                    request_id: "".into(),
+                    space_address: space_address.clone(),
+                    provider_agent_id: provider.clone(),
+                    entry_address: entry_data.entry_address.clone(),
+                    entry_aspect: aspect,
+                }),
+            );
+            // 3. Send store message to everybody in this space
+            if let Err(e) = self.broadcast(space_address.clone(), &store_message) {
+                error!("Error during broadcast: {:?}", e);
+            }
+        }
+    }
+
     fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage) -> Sim2hResult<()> {
         debug!("Broadcast in space: {:?}", space);
         let all_uris = self
