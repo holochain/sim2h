@@ -723,7 +723,7 @@ pub mod tests {
     }
 
     fn make_test_dm_message_response_with(data: DirectMessageData) -> WireMessage {
-        WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::SendDirectMessageResult(data))
+        WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleSendDirectMessageResult(data))
     }
 
     fn make_test_err_message() -> WireMessage {
@@ -914,7 +914,11 @@ pub mod tests {
     pub fn test_message() {
         let netname = "test_message";
         let mut sim2h = make_test_sim2h_memnet(netname);
-        let uri = Lib3hUri::with_memory("addr_x");
+        let network = {
+            let mut verse = get_memory_verse();
+            verse.get_network(netname)
+        };
+        let uri = network.lock().unwrap().bind();
 
         // a message from an unconnected agent should return an error
         let result = sim2h.handle_message(&uri, make_test_err_message());
@@ -939,10 +943,6 @@ pub mod tests {
 
         // dm
         // first we have to setup the to agent on the in-memory-network and in the space
-        let network = {
-            let mut verse = get_memory_verse();
-            verse.get_network(netname)
-        };
         let to_uri = network.lock().unwrap().bind();
         let _ = sim2h.handle_incoming_connect(to_uri.clone());
         let to_agent_data = make_test_space_data_with_agent("fake_to_agent_id".into());
@@ -962,9 +962,9 @@ pub mod tests {
             .expect("there should be a server for to_uri");
         if let Ok((did_work, events)) = server.process() {
             assert!(did_work);
-            let dm = &events[1];
+            let dm = &events[2];
             assert_eq!(
-                "ReceivedData(Lib3hUri(\"mem://addr_2/\"), \"{\\\"Lib3hToClient\\\":{\\\"HandleSendDirectMessage\\\":{\\\"space_address\\\":\\\"fake_space_address\\\",\\\"request_id\\\":\\\"\\\",\\\"to_agent_id\\\":\\\"fake_to_agent_id\\\",\\\"from_agent_id\\\":\\\"fake_agent_id\\\",\\\"content\\\":\\\"Zm9v\\\"}}}\")",
+                "ReceivedData(Lib3hUri(\"mem://addr_3/\"), \"{\\\"Lib3hToClient\\\":{\\\"HandleSendDirectMessage\\\":{\\\"space_address\\\":\\\"fake_space_address\\\",\\\"request_id\\\":\\\"\\\",\\\"to_agent_id\\\":\\\"fake_to_agent_id\\\",\\\"from_agent_id\\\":\\\"fake_agent_id\\\",\\\"content\\\":\\\"Zm9v\\\"}}}\")",
                 format!("{:?}", dm))
         } else {
             assert!(false)
@@ -1038,7 +1038,7 @@ pub mod tests {
                 .expect("there should be a server for to_uri");
             if let Ok((did_work, events)) = server.process() {
                 assert!(did_work);
-                let dm = &events[1];
+                let dm = &events[2];
                 assert_eq!(
                    "ReceivedData(Lib3hUri(\"mem://addr_1/\"), \"{\\\"Lib3hToClient\\\":{\\\"HandleSendDirectMessage\\\":{\\\"space_address\\\":\\\"fake_space_address\\\",\\\"request_id\\\":\\\"\\\",\\\"to_agent_id\\\":\\\"agent2\\\",\\\"from_agent_id\\\":\\\"agent1\\\",\\\"content\\\":\\\"Y29tZSBoZXJlIHdhdHNvbg==\\\"}}}\")",
                     format!("{:?}", dm))
