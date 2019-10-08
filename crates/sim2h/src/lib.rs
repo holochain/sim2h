@@ -11,25 +11,27 @@ pub mod error;
 pub mod wire_message;
 
 use crate::error::*;
+use connected_agent::*;
+pub use wire_message::WireMessage;
+
 use detach::prelude::*;
 use holochain_tracing::Span;
 use lib3h::transport::protocol::*;
 use lib3h_protocol::{
-    data_types::SpaceData, protocol::*, types::SpaceHash, uri::Lib3hUri, Address,
+    data_types::{EntryData, FetchEntryData, GetListData, Opaque, SpaceData, StoreEntryAspectData},
+    protocol::*,
+    types::SpaceHash,
+    uri::Lib3hUri,
+    Address,
 };
 use lib3h_zombie_actor::prelude::*;
 
+use log::*;
 use parking_lot::RwLock;
-use std::{collections::HashMap, convert::TryFrom};
-
-use connected_agent::*;
-use lib3h_protocol::data_types::{
-    EntryData, FetchEntryData, GetListData, Opaque, StoreEntryAspectData,
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
 };
-use log::{debug, error, info, warn};
-use std::collections::HashSet;
-use url::Url;
-pub use wire_message::WireMessage;
 
 pub struct Space {
     agents: HashMap<AgentId, Lib3hUri>,
@@ -170,7 +172,7 @@ pub struct Sim2h {
 
 #[allow(dead_code)]
 impl Sim2h {
-    pub fn new(transport: DynTransportActor) -> Self {
+    pub fn new(transport: DynTransportActor, bind_spec: Lib3hUri) -> Self {
         let t = Detach::new(TransportActorParentWrapperDyn::new(transport, "transport_"));
 
         let mut sim2h = Sim2h {
@@ -180,75 +182,26 @@ impl Sim2h {
             transport: t,
         };
 
+        debug!("Trying to bind to {}...", bind_spec);
         let _ = sim2h.transport.request(
             Span::fixme(),
-            RequestToChild::Bind {
-                spec: Lib3hUri::with_undefined(),
-            }, //TODO get spec from a config
+            RequestToChild::Bind { spec: bind_spec },
             Box::new(|me, response| match response {
                 GhostCallbackData::Response(Ok(RequestToChildResponse::Bind(bind_result))) => {
+                    debug!("Bound as {}", &bind_result.bound_url);
                     me.bound_uri = Some(bind_result.bound_url);
-                    debug!("Bound as {:?}", &me.bound_uri);
                     Ok(())
                 }
-                GhostCallbackData::Response(Err(e)) => Err(e.into()),
+                GhostCallbackData::Response(Err(e)) => Err(format!("Bind error: {}", e).into()),
                 GhostCallbackData::Timeout(bt) => Err(format!("timeout: {:?}", bt).into()),
-                _ => Err("bad response type".into()),
+                r => Err(format!(
+                    "Got unexpected response from transport actor during bind: {:?}",
+                    r
+                )
+                .into()),
             }),
         );
         sim2h
-    }
-
-    pub fn with_detached_transport(
-        transport: Detach<TransportActorParentWrapperDyn<Self>>,
-    ) -> Self {
-        Sim2h {
-            bound_uri: None,
-            connection_states: RwLock::new(HashMap::new()),
-            spaces: HashMap::new(),
-            transport,
-        }
-    }
-
-    pub fn bind_transport_sync(&mut self, port: u16) -> Result<Lib3hUri, String> {
-        let url_string = format!("wss://127.0.0.1:{}", port);
-        let url = Url::parse(&url_string).expect("can parse url");
-        debug!("Trying to bind to {}...", url_string);
-
-        // channel for making an async call sync
-        let (tx, rx) = crossbeam_channel::unbounded();
-        self.transport
-            .request(
-                Span::todo("Find out how to use spans the right way"),
-                RequestToChild::Bind { spec: url.into() },
-                // callback just notifies channel so
-                Box::new(move |_owner, response| {
-                    let result = match response {
-                        GhostCallbackData::Timeout(bt) => {
-                            Err(format!("Bind timed out. Backtrace: {:?}", bt))
-                        }
-                        GhostCallbackData::Response(Ok(RequestToChildResponse::Bind(
-                            bind_result_data,
-                        ))) => Ok(bind_result_data.bound_url),
-                        GhostCallbackData::Response(Err(transport_error)) => {
-                            Err(format!("Error during bind: {:?}", transport_error))
-                        }
-                        _ => Err(String::from(
-                            "Got unexpected response from transport actor during bind",
-                        )),
-                    };
-                    let _ = tx.send(result);
-                    Ok(())
-                }),
-            )
-            .map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
-
-        for _ in 1..3 {
-            detach_run!(&mut self.transport, |t| t.process(self))
-                .map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
-        }
-
-        rx.recv().expect("local channel to work")
     }
 
     fn request_authoring_list(
@@ -318,7 +271,9 @@ impl Sim2h {
 
     // removes a uri from connection and from spaces
     fn disconnect(&self, uri: &Lib3hUri) {
-        if let Some(ConnectedAgent::JoinedSpace(space_address, agent_id)) = self.connection_states.write().remove(uri) {
+        if let Some(ConnectedAgent::JoinedSpace(space_address, agent_id)) =
+            self.connection_states.write().remove(uri)
+        {
             self.spaces
                 .get(&space_address)
                 .unwrap()
@@ -436,15 +391,16 @@ impl Sim2h {
                     }
                 }
                 RequestToParent::ErrorOccured { uri, error } => {
-                    if error.to_string() == "Protocol(\"Connection reset without closing handshake\")" {
+                    if error.to_string()
+                        == "Protocol(\"Connection reset without closing handshake\")"
+                    {
                         debug!("Disconnecting {} after connection reset", uri);
                         self.disconnect(&uri);
-                    }
-                    else {
+                    } else {
                         error!(
                             "Transport error occured on connection to {:?}: {:?}",
-                            uri, error
-                                ,)
+                            uri, error,
+                        )
                     }
                 }
             }
@@ -737,7 +693,9 @@ pub mod tests {
     }
 
     fn make_test_dm_message_response_with(data: DirectMessageData) -> WireMessage {
-        WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleSendDirectMessageResult(data))
+        WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleSendDirectMessageResult(
+            data,
+        ))
     }
 
     fn make_test_err_message() -> WireMessage {
@@ -746,13 +704,13 @@ pub mod tests {
 
     fn make_test_sim2h_nonet() -> Sim2h {
         let transport = Box::new(GhostTransportMemory::new("null".into(), "nullnet".into()));
-        Sim2h::new(transport)
+        Sim2h::new(transport, Lib3hUri::with_undefined())
     }
 
     fn make_test_sim2h_memnet(netname: &str) -> Sim2h {
         let transport_id = "test_transport".into();
         let transport = Box::new(GhostTransportMemory::new(transport_id, netname));
-        Sim2h::new(transport)
+        Sim2h::new(transport, Lib3hUri::with_undefined())
     }
 
     #[test]
