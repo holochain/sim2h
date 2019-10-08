@@ -212,6 +212,22 @@ impl Sim2h {
         rx.recv().expect("local channel to work")
     }
 
+    fn request_authoring_list(
+        &mut self,
+        uri: Lib3hUri,
+        space_address: SpaceHash,
+        provider_agent_id: AgentId
+    ) {
+        let wire_message = WireMessage::Lib3hToClient(
+            Lib3hToClient::HandleGetAuthoringEntryList(GetListData {
+                request_id: "".into(),
+                space_address,
+                provider_agent_id,
+            })
+        );
+        self.send(uri, wire_message.into());
+    }
+
     // adds an agent to a space
     fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
         if let Some(ConnectedAgent::Limbo) = self.get_connection(uri) {
@@ -231,6 +247,11 @@ impl Sim2h {
             debug!(
                 "Agent {:?} joined space {:?}",
                 data.agent_id, data.space_address
+            );
+            self.request_authoring_list(
+                uri.clone(),
+                data.space_address.clone(),
+                data.agent_id.clone()
             );
             Ok(())
         } else {
