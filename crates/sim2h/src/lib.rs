@@ -319,6 +319,7 @@ impl Sim2h {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
                     self.join(uri, &data)
                 } else {
+                    error!("Got message while still in LIMBO: {:?}", message);
                     Err(format!("no agent validated at {} ", uri).into())
                 }
             }
