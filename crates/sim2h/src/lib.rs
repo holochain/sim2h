@@ -331,26 +331,8 @@ impl Sim2h {
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
                 {
                     if is_request {
-                        let payload = message.into();
-                        self.transport
-                            .request(
-                                Span::fixme(),
-                                RequestToChild::SendMessage {
-                                    uri: to_uri,
-                                    payload,
-                                },
-                                Box::new(|_me, response| match response {
-                                    GhostCallbackData::Response(Ok(
-                                        RequestToChildResponse::SendMessageSuccess,
-                                    )) => Ok(()),
-                                    GhostCallbackData::Response(Err(e)) => Err(e.into()),
-                                    GhostCallbackData::Timeout(bt) => {
-                                        Err(format!("timeout: {:?}", bt).into())
-                                    }
-                                    _ => Err("bad response type".into()),
-                                }),
-                            )
-                            .map_err(|e| e.into())
+                        self.send(to_uri, &message);
+                        Ok(())
                     } else {
                         unimplemented!()
                     }
