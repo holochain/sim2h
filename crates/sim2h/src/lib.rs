@@ -210,7 +210,7 @@ impl Sim2h {
             //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
 
             // if the agent sending the messages has been vetted and is in the space
-            // then build a message to be proxied tothe correct destination, and forward it
+            // then build a message to be proxied to the correct destination, and forward it
             ConnectedAgent::JoinedSpace(space_address, agent_id) => {
                 if let Some((is_request, to_uri, message)) =
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
@@ -841,8 +841,12 @@ pub mod tests {
         );
 
         // now send a direct message from agent1 through sim2h which should arrive at agent2
-        let data = make_test_dm_data_with(space_data1.agent_id,space_data2.agent_id,"come here watson");
-        let message : Opaque = make_test_dm_message_with(data).into();
+        let data = make_test_dm_data_with(
+            space_data1.agent_id,
+            space_data2.agent_id,
+            "come here watson",
+        );
+        let message: Opaque = make_test_dm_message_with(data).into();
         {
             let mut net = network.lock().unwrap();
             let server = net
@@ -852,17 +856,18 @@ pub mod tests {
             assert_eq!(result, Ok(()));
         }
         let _result = sim2h.process();
+        let _result = sim2h.process();
         {
             let mut net = network.lock().unwrap();
             let server = net
-                .get_server(&agent1_uri)
+                .get_server(&agent2_uri)
                 .expect("there should be a server for to_uri");
             if let Ok((did_work, events)) = server.process() {
                 assert!(did_work);
-//                let dm = &events[1];
+                let dm = &events[1];
                 assert_eq!(
-                    "",
-                    format!("{:?}", events))
+                   "ReceivedData(Lib3hUri(\"mem://addr_1/\"), \"{\\\"Lib3hToClient\\\":{\\\"HandleSendDirectMessage\\\":{\\\"space_address\\\":\\\"fake_space_address\\\",\\\"request_id\\\":\\\"\\\",\\\"to_agent_id\\\":\\\"agent2\\\",\\\"from_agent_id\\\":\\\"agent1\\\",\\\"content\\\":\\\"Y29tZSBoZXJlIHdhdHNvbg==\\\"}}}\")",
+                    format!("{:?}", dm))
             } else {
                 assert!(false)
             }
