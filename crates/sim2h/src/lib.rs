@@ -32,12 +32,8 @@ use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
 };
-use log::{debug, error, info, warn};
-use std::collections::HashSet;
-use url::Url;
 use rand::Rng;
 
-pub use wire_message::WireMessage;
 
 pub struct Space {
     agents: HashMap<AgentId, Lib3hUri>,
