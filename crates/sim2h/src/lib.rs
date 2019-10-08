@@ -415,6 +415,12 @@ impl Sim2h {
     ) -> Sim2hResult<Option<(bool, Lib3hUri, WireMessage)>> {
         debug!("Handling message from agent {:?}: {:?}", agent_id, message);
         match message {
+            // First make sure we are not receiving a message in the wrong direction.
+            // Panic for now so we can easily spot a mistake.
+            // Should maybe break up WireMessage into two different structs so we get the
+            // error already when parsing an incoming payload.
+            WireMessage::Lib3hToClient(_) | WireMessage::ClientToLib3hResponse(_) =>
+                panic!("This is soo wrong. Clients should never send a message that only servers can send."),
             // -- Space -- //
             WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => {
                 Err("join message should have been processed elsewhere and can't be proxied".into())
@@ -440,7 +446,7 @@ impl Sim2h {
                 )))
             }
             // Direct message response
-            WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::SendDirectMessageResult(
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleSendDirectMessageResult(
                 dm_data,
             )) => {
                 if (dm_data.from_agent_id != *agent_id) || (dm_data.space_address != *space_address)
