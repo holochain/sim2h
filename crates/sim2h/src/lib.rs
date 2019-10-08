@@ -428,11 +428,15 @@ impl Sim2h {
                     return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
                 debug!("Got Publish - broadcasting all aspects to all agents...");
-                //let space_lock = self.spaces
-                //    .get(space_address)
-                //    .expect("This function should not be called if we don't have this space");
-
                 for aspect in data.entry.aspect_list {
+                    self.spaces
+                        .get(space_address)
+                        .expect("This function should not be called if we don't have this space")
+                        .write()
+                        .add_aspect(
+                            data.entry.entry_address.clone(),
+                            aspect.aspect_address.clone(),
+                        );
                     let store_message = WireMessage::Lib3hToClient(
                         Lib3hToClient::HandleStoreEntryAspect(StoreEntryAspectData {
                             request_id: "".into(),
