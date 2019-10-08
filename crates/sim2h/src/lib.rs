@@ -548,6 +548,13 @@ impl Sim2h {
 
                     debug!("FETCHING missing contents from RANDOM AGENT: {}", random_agent);
 
+                    let maybe_url = self.lookup_joined(space_address, random_agent);
+                    if maybe_url.is_none() {
+                        error!("Could not find URL for randomly selected agent. This should not happen!");
+                        return Ok(None)
+                    }
+                    let random_url = maybe_url.unwrap();
+
                     for entry_address in aspects_missing_at_node.entry_addresses() {
                         if let Some(aspect_address_list) = aspects_missing_at_node.per_entry(entry_address) {
                             let wire_message = WireMessage::Lib3hToClient(
@@ -560,7 +567,7 @@ impl Sim2h {
                                 })
                             );
                             debug!("SENDING FeTCH with ReQUest ID: {:?}", wire_message);
-                            self.send(uri.clone(), &wire_message);
+                            self.send(random_url.clone(), &wire_message);
                         }
                     }
                 }
