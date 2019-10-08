@@ -505,85 +505,11 @@ impl Sim2h {
                 Ok(None)
             }
             _ => {
-                warn!("Ignoring unimplemented message");
-                Err("Message not implemented".into())
+                warn!("Ignoring unimplemented message: {:?}", message );
+                Err(format!("Message not implemented: {:?}", message).into())
             }
         }
     }
-
-    /*
-
-            // cache messages cus we are waiting for confirmation of join
-            fn self.process_join_request(agent,payload) {}
-
-            fn process_next_message(&self) {
-                match transport.drain() {
-                    RequestToParent::ReceivedData{uri, payload} => {
-                        self.handle_message(uri,payload)?
-                    }
-                    RequestToParent::IncomingConnection{uri} => {
-                        self.handle_incominng_connection(uri)?
-                    }
-
-                    RequestToParent::ConnectionClosed{uri} => {
-                        self.connection_states.writ } else if let Ok(msg) = Lib3hToClientResponse::try_from(payload) e().remove(uri);  // ignore if we don't have it
-                    }
-                }
-
-            }
-
-            fn proxy(&self, space_address: Address, agent_id: AgentId, payload: Opaque) -> Result<Option<Opaque>, ProxyError> {
-
-                match WireMessage::try_from(payload)? {
-                    ClientToLib3h(msg) => match msg {
-                        // -- Connection -- //
-                        /// create an explicit connection to a remote peer
-                        Bootstrap(BootstrapData) => {// handled in client}
-
-                        // -- Entry -- //
-                        /// Request an Entry from the dht network
-                        FetchEntry(FetchEntryData), // NOTE: MAY BE DEPRECATED
-                        /// Publish data to the dht (event)
-                        HandleGetGossipingEntryListResult(EntryListData) => {}
-
-                        /// Tell Engine that Client is holding this entry (event)
-                        HoldEntry(ProvidedEntryData) => {}
-                        /// Request some info / data from a Entry
-                        QueryEntry(QueryEntryData) => {}
-                    },
-                  Lib3hToClientResponse(msg) => msg {
-                        /// Our response to a direct message from another agent.
-                        HandleSendDirectMessageResult(DirectMessageData) => {}
-                        /// Successful data response for a `HandleFetchEntryData` request
-                        HandleFetchEntryResult(FetchEntryResultData) => {}
-                        HandleStoreEntryAspectResult => {}
-                        HandleDropEntryResult => {}
-                        /// Response to a `HandleQueryEntry` request
-                        HandleQueryEntryResult(QueryEntryResultData) => {}
-                        // -- Entry lists -- //
-                        HandleGetAuthoringEntryListResult(EntryListData) => {}
-                        HandleGetGossipingEntryListResult(EntryListData) => {}
-                    },
-                  _ => WireMessage::Err(...)
-                }
-
-
-
-                let {space, from,to} = msg;
-                if from != agent_id_from_ws {
-                    return Err(...)
-                }
-
-                //if do we have a connected agent
-                let to_agent = self.lookup(space, to).ok_or_else(|| Err(...))?;
-
-                match msg {
-                    SendDirectMessage | SendDirectMessageResult => to_agent.forward(msg),
-                    Publish => self.broadcast(space_address, StoreEntryAspect(...))
-                }
-
-            }
-    */
 
     fn handle_new_entry_data(
         &mut self,
