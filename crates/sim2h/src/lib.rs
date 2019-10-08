@@ -184,7 +184,7 @@ impl Sim2h {
     }
 
     pub fn bind_transport_sync(&mut self, port: u16) -> Result<Lib3hUri, String> {
-        let url_string = format!("wss://localhost:{}", port);
+        let url_string = format!("wss://127.0.0.1:{}", port);
         let url = Url::parse(&url_string).expect("can parse url");
         debug!("Trying to bind to {}...", url_string);
 
