@@ -240,6 +240,7 @@ impl Sim2h {
         }
     }
 
+    // process transport and  incoming messages from it
     pub fn process(&mut self) -> Sim2hResult<()> {
         detach_run!(&mut self.transport, |t| t.process(self)).map_err(|e| format!("{:?}", e))?;
         for mut transport_message in self.transport.drain_messages() {
@@ -309,7 +310,27 @@ impl Sim2h {
                     WireMessage::Lib3hToClient(Lib3hToClient::HandleSendDirectMessage(dm_data)),
                 )))
             }
+            // Direct message response
+            WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::SendDirectMessageResult(
+                dm_data,
+            )) => {
+                if (dm_data.from_agent_id != *agent_id) || (dm_data.space_address != *space_address)
+                {
+                    return Err(SPACE_MISMATCH_ERR_STR.into());
+                }
+                let to_url = self
+                    .lookup_joined(space_address, &dm_data.to_agent_id)
+                    .ok_or_else(|| format!("unvalidated proxy agent {}", &dm_data.to_agent_id))?;
+                Ok(Some((
+                    true,
+                    to_url,
+                    WireMessage::Lib3hToClient(Lib3hToClient::SendDirectMessageResult(dm_data)),
+                )))
+            }
             WireMessage::ClientToLib3h(ClientToLib3h::PublishEntry(data)) => {
+                if (data.provider_agent_id != *agent_id) || (data.space_address != *space_address) {
+                    return Err(SPACE_MISMATCH_ERR_STR.into());
+                }
                 debug!("Got Publish - broadcasting all aspects to all agents...");
                 for aspect in data.entry.aspect_list {
                     let store_message = WireMessage::Lib3hToClient(
@@ -335,8 +356,6 @@ impl Sim2h {
     }
 
     /*
-            // the message better be a join
-            fn process_limbo(agent,payload) {}
 
             // cache messages cus we are waiting for confirmation of join
             fn self.process_join_request(agent,payload) {}
@@ -365,38 +384,12 @@ impl Sim2h {
                         /// create an explicit connection to a remote peer
                         Bootstrap(BootstrapData) => {// handled in client}
 
-                        /// Order the engine to leave the network of the specified space.
-                        LeaveSpace(SpaceData) => {
-                            // remove from map
-                            self.spaces
-                                .get(space_address)?
-                                .write()
-                                .take(agent_id)
-                                .and_then(|uri| {
-                                    self.connection_states.write().remove(uri);
-                                    self.transport.send(RequestToChild::Disconnect(uri));
-                                })
-                        }
-
                         // -- Entry -- //
                         /// Request an Entry from the dht network
                         FetchEntry(FetchEntryData), // NOTE: MAY BE DEPRECATED
-                        /// Publish data to the dht (event)                HandleGetGossipingEntryListResult(EntryListData) => {}
+                        /// Publish data to the dht (event)
+                        HandleGetGossipingEntryListResult(EntryListData) => {}
 
-                        PublishEntry(provided_entry_data) => {
-                            for aspect_data in provided_entry_data.entry_data.aspect_list {
-                                let broadcast_msg = WireMessage::Lib3hToClient::HandleStoreEntryAspect(
-                                    StoreEntryAspectData {
-                                        request_id: String,
-                                        space_address: provided_entry_data.space_address.clone(),
-                                        provider_agent_id: provided_entry_data.provider_agent_id.clone(),
-                                        entry_address: Address,
-                                        entry_aspect: EntryAspectData,
-                                    });
-                                broadcast(space_address, broadcast_msg)?;
-                            }
-
-                        }
                         /// Tell Engine that Client is holding this entry (event)
                         HoldEntry(ProvidedEntryData) => {}
                         /// Request some info / data from a Entry
@@ -510,18 +503,30 @@ pub mod tests {
         WireMessage::ClientToLib3h(ClientToLib3h::LeaveSpace(make_test_space_data()))
     }
 
-    fn make_test_dm_data() -> DirectMessageData {
+    fn make_test_dm_data_with(from: AgentId, to: AgentId, content: &str) -> DirectMessageData {
         DirectMessageData {
             request_id: "".into(),
             space_address: "fake_space_address".into(),
-            from_agent_id: make_test_agent(),
-            to_agent_id: "fake_to_agent_id".into(),
-            content: "foo".into(),
+            from_agent_id: from,
+            to_agent_id: to,
+            content: content.into(),
         }
     }
 
+    fn make_test_dm_data() -> DirectMessageData {
+        make_test_dm_data_with(make_test_agent(), "fake_to_agent_id".into(), "foo")
+    }
+
     fn make_test_dm_message() -> WireMessage {
-        WireMessage::ClientToLib3h(ClientToLib3h::SendDirectMessage(make_test_dm_data()))
+        make_test_dm_message_with(make_test_dm_data())
+    }
+
+    fn make_test_dm_message_with(data: DirectMessageData) -> WireMessage {
+        WireMessage::ClientToLib3h(ClientToLib3h::SendDirectMessage(data))
+    }
+
+    fn make_test_dm_message_response_with(data: DirectMessageData) -> WireMessage {
+        WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::SendDirectMessageResult(data))
     }
 
     fn make_test_err_message() -> WireMessage {
@@ -689,6 +694,15 @@ pub mod tests {
         assert_eq!(
             "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(HandleSendDirectMessage(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"fake_to_agent_id\"), from_agent_id: HashString(\"fake_agent_id\"), content: \"foo\" })))))",
             format!("{:?}", result)
+        );
+
+        // proxy a dm message response
+        // for this test we just pretend the same agent set up above is making a response
+        let message = make_test_dm_message_response_with(make_test_dm_data());
+        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
+        assert_eq!(
+            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(SendDirectMessageResult(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"fake_to_agent_id\"), from_agent_id: HashString(\"fake_agent_id\"), content: \"foo\" })))))",
+                format!("{:?}", result)
         );
 
         // proxy a leave space message should remove the agent from the space
