@@ -21,7 +21,7 @@ use parking_lot::RwLock;
 use std::{collections::HashMap, convert::TryFrom};
 
 use connected_agent::*;
-use lib3h_protocol::data_types::StoreEntryAspectData;
+use lib3h_protocol::data_types::{StoreEntryAspectData, FetchEntryData, Opaque, GetListData};
 use log::{debug, error, warn};
 use url::Url;
 pub use wire_message::WireMessage;
@@ -61,6 +61,10 @@ impl Space {
         &self.agents
     }
 
+    pub fn all_aspects(&self) -> &AspectList {
+        &self.all_aspects_hashes
+    }
+
     pub fn add_aspect(&mut self, entry_address: Address, aspect_address: Address) {
         self.all_aspects_hashes.add(entry_address, aspect_address);
     }
@@ -86,6 +90,14 @@ impl AspectList {
         } else {
             self.0.get_mut(&entry_address).unwrap().push(aspect_address);
         }
+    }
+
+    pub fn entry_addresses(&self) -> impl Iterator<Item = &Address> {
+        self.0.keys()
+    }
+
+    pub fn per_entry(&self, entry_address: &Address) -> Option<&Vec<Address>> {
+        self.0.get(entry_address)
     }
 }
 
@@ -452,7 +464,7 @@ impl Sim2h {
                 for aspect in data.entry.aspect_list {
                     self.spaces
                         .get(space_address)
-                        .expect("This function should not be called if we don't have this space")
+                        .expect("This function should not get called if we don't have this space")
                         .write()
                         .add_aspect(
                             data.entry.entry_address.clone(),
@@ -469,6 +481,33 @@ impl Sim2h {
                     );
                     if let Err(e) = self.broadcast(data.space_address.clone(), &store_message) {
                         error!("Error during broadcast: {:?}", e);
+                    }
+                }
+                Ok(None)
+            }
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetAuthoringEntryListResult(list_data)) => {
+                if (list_data.provider_agent_id != *agent_id) || (list_data.space_address != *space_address) {
+                    return Err(SPACE_MISMATCH_ERR_STR.into());
+                }
+                let unseen_aspects = AspectList::from(list_data.address_map)
+                    .diff(self.spaces
+                        .get(space_address)
+                        .expect("This function should not get called if we don't have this space")
+                        .read()
+                        .all_aspects()
+                    );
+                for entry_address in unseen_aspects.entry_addresses() {
+                    if let Some(aspect_address_list) = unseen_aspects.per_entry(entry_address) {
+                        let wire_message = WireMessage::Lib3hToClient(
+                            Lib3hToClient::HandleFetchEntry(FetchEntryData {
+                                request_id: "".into(),
+                                space_address: space_address.clone(),
+                                provider_agent_id: agent_id.clone(),
+                                entry_address: entry_address.clone(),
+                                aspect_address_list: Some(aspect_address_list.clone())
+                            })
+                        );
+                        self.send(uri.clone(), wire_message.into());
                     }
                 }
                 Ok(None)
@@ -555,7 +594,7 @@ impl Sim2h {
     */
     fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage) -> Sim2hResult<()> {
         debug!("Broadcast in space: {:?}", space);
-        for uri in self
+        let all_uris = self
             .spaces
             .get(&space)
             .ok_or("No such space")?
@@ -563,29 +602,34 @@ impl Sim2h {
             .all_agents()
             .values()
             .cloned()
-        {
+            .collect::<Vec<_>>();
+        for uri in all_uris {
             debug!("Broadcast: Sending to {:?}", uri);
-            let send_result = self.transport.request(
-                Span::fixme(),
-                RequestToChild::SendMessage {
-                    uri,
-                    payload: msg.clone().into(),
-                },
-                Box::new(|_me, response| match response {
-                    GhostCallbackData::Response(Ok(RequestToChildResponse::SendMessageSuccess)) => {
-                        Ok(())
-                    }
-                    GhostCallbackData::Response(Err(e)) => Err(e.into()),
-                    GhostCallbackData::Timeout(bt) => Err(format!("timeout: {:?}", bt).into()),
-                    _ => Err("bad response type".into()),
-                }),
-            );
-
-            if let Err(e) = send_result {
-                error!("GhostError during broadcast send: {:?}", e)
-            }
+            self.send(uri, msg.clone().into());
         }
         Ok(())
+    }
+
+    fn send(&mut self, uri: Lib3hUri, payload: Opaque) {
+        let send_result = self.transport.request(
+            Span::fixme(),
+            RequestToChild::SendMessage {
+                uri,
+                payload,
+            },
+            Box::new(|_me, response| match response {
+                GhostCallbackData::Response(Ok(RequestToChildResponse::SendMessageSuccess)) => {
+                    Ok(())
+                }
+                GhostCallbackData::Response(Err(e)) => Err(e.into()),
+                GhostCallbackData::Timeout(bt) => Err(format!("timeout: {:?}", bt).into()),
+                _ => Err("bad response type".into()),
+            }),
+        );
+
+        if let Err(e) = send_result {
+            error!("GhostError during broadcast send: {:?}", e)
+        }
     }
 }
 
