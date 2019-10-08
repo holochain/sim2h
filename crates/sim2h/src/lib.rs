@@ -54,6 +54,7 @@ impl Sim2h {
             Box::new(|me, response| match response {
                 GhostCallbackData::Response(Ok(RequestToChildResponse::Bind(bind_result))) => {
                     me.bound_uri = Some(bind_result.bound_url);
+                    debug!("Bound as {:?}", &me.bound_uri);
                     Ok(())
                 }
                 GhostCallbackData::Response(Err(e)) => Err(e.into()),
@@ -197,6 +198,8 @@ impl Sim2h {
             .get_connection(uri)
             .ok_or_else(|| format!("no connection for {}", uri))?;
         match agent {
+            // if the agent sending the message is in limbo, then the only message
+            // allowed is a join message.
             ConnectedAgent::Limbo => {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
                     self.join(uri, &data)
@@ -205,6 +208,9 @@ impl Sim2h {
                 }
             }
             //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
+
+            // if the agent sending the messages has been vetted and is in the space
+            // then build a message to be proxied tothe correct destination, and forward it
             ConnectedAgent::JoinedSpace(space_address, agent_id) => {
                 if let Some((is_request, to_uri, message)) =
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
@@ -470,6 +476,23 @@ pub mod tests {
         ghost_transport_memory::*, memory_server::get_memory_verse,
     };
     use lib3h_protocol::data_types::*;
+
+    // for this to actually show log entries you also have to run the tests like this:
+    // RUST_LOG=lib3h=debug cargo test -- --nocapture
+    pub fn enable_logging_for_test(enable: bool) {
+        // wait a bit because of non monotonic clock,
+        // otherwise we could get negative substraction panics
+        // TODO #211
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        if std::env::var("RUST_LOG").is_err() {
+            std::env::set_var("RUST_LOG", "debug");
+        }
+        let _ = env_logger::builder()
+            .default_format_timestamp(false)
+            .default_format_module_path(false)
+            .is_test(enable)
+            .try_init();
+    }
 
     fn make_test_agent() -> AgentId {
         "fake_agent_id".into()
@@ -776,6 +799,7 @@ pub mod tests {
 
     #[test]
     pub fn test_end_to_end() {
+        enable_logging_for_test(true);
         let netname = "test_end_to_end";
         let mut sim2h = make_test_sim2h_memnet(netname);
         let _result = sim2h.process();
@@ -806,9 +830,7 @@ pub mod tests {
             let result = server.post(&agent2_uri, &join2.to_vec());
             assert_eq!(result, Ok(()));
         }
-
         let _result = sim2h.process();
-
         assert_eq!(
             sim2h.lookup_joined(&space_data1.space_address, &space_data1.agent_id),
             Some(agent1_uri.clone())
@@ -817,5 +839,33 @@ pub mod tests {
             sim2h.lookup_joined(&space_data2.space_address, &space_data2.agent_id),
             Some(agent2_uri.clone())
         );
+
+        // now send a direct message from agent1 through sim2h which should arrive at agent2
+        let data = make_test_dm_data_with(space_data1.agent_id,space_data2.agent_id,"come here watson");
+        let message : Opaque = make_test_dm_message_with(data).into();
+        {
+            let mut net = network.lock().unwrap();
+            let server = net
+                .get_server(&sim2h_uri)
+                .expect("there should be a server for to_uri");
+            let result = server.post(&agent1_uri, &message.to_vec());
+            assert_eq!(result, Ok(()));
+        }
+        let _result = sim2h.process();
+        {
+            let mut net = network.lock().unwrap();
+            let server = net
+                .get_server(&agent1_uri)
+                .expect("there should be a server for to_uri");
+            if let Ok((did_work, events)) = server.process() {
+                assert!(did_work);
+//                let dm = &events[1];
+                assert_eq!(
+                    "",
+                    format!("{:?}", events))
+            } else {
+                assert!(false)
+            }
+        }
     }
 }
