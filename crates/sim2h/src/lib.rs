@@ -1,5 +1,5 @@
-//#[macro_use]
 extern crate env_logger;
+//#[macro_use]
 extern crate log;
 #[macro_use]
 extern crate detach;
@@ -28,7 +28,7 @@ use lib3h_protocol::data_types::StoreEntryAspectData;
 
 #[allow(dead_code)]
 pub struct Sim2h {
-    bound_uri: Option<Lib3hUri>,
+    pub bound_uri: Option<Lib3hUri>,
     connection_states: RwLock<HashMap<Lib3hUri, ConnectedAgent>>,
     spaces: HashMap<SpaceHash, RwLock<HashMap<AgentId, Lib3hUri>>>,
     transport: Detach<TransportActorParentWrapperDyn<Self>>,
@@ -547,7 +547,7 @@ pub mod tests {
 
     #[test]
     pub fn test_join() {
-        let sim2h = make_test_sim2h_nonet();
+        let mut sim2h = make_test_sim2h_nonet();
         let uri = Lib3hUri::with_memory("addr_1");
 
         let data = make_test_space_data();
@@ -575,7 +575,7 @@ pub mod tests {
 
     #[test]
     pub fn test_leave() {
-        let sim2h = make_test_sim2h_nonet();
+        let mut sim2h = make_test_sim2h_nonet();
         let uri = Lib3hUri::with_memory("addr_1");
         let mut data = make_test_space_data();
 
@@ -609,7 +609,7 @@ pub mod tests {
 
     #[test]
     pub fn test_prepare_proxy() {
-        let sim2h = make_test_sim2h_nonet();
+        let mut sim2h = make_test_sim2h_nonet();
 
         let uri = Lib3hUri::with_memory("addr_1");
         let _ = sim2h.handle_incoming_connect(uri.clone());
@@ -721,5 +721,51 @@ pub mod tests {
         } else {
             assert!(false)
         }
+    }
+
+    #[test]
+    pub fn test_end_to_end() {
+        let netname = "test_end_to_end";
+        let mut sim2h = make_test_sim2h_memnet(netname);
+        let _result = sim2h.process();
+        let sim2h_uri = sim2h.bound_uri.clone().expect("should have bound");
+
+        // set up two other agents on the memory-network
+        let network = {
+            let mut verse = get_memory_verse();
+            verse.get_network(netname)
+        };
+        let agent1_uri = network.lock().unwrap().bind();
+        let agent2_uri = network.lock().unwrap().bind();
+
+        // connect them to sim2h with join messages
+        let space_data1 = make_test_space_data_with_agent("agent1".into());
+        let space_data2 = make_test_space_data_with_agent("agent2".into());
+        let join1 : Opaque = make_test_join_message_with_space_data(space_data1.clone()).into();
+        let join2 : Opaque = make_test_join_message_with_space_data(space_data2.clone()).into();
+        {
+        let mut net = network.lock().unwrap();
+        let server = net
+            .get_server(&sim2h_uri)
+            .expect("there should be a server for to_uri");
+        server.request_connect(&agent1_uri).expect("can connect");
+        let result = server.post(&agent1_uri, &join1.to_vec());
+        assert_eq!(result, Ok(()));
+        server.request_connect(&agent2_uri).expect("can connect");
+        let result = server.post(&agent2_uri, &join2.to_vec());
+        assert_eq!(result, Ok(()));
+        }
+
+        let _result = sim2h.process();
+
+        assert_eq!(
+            sim2h.lookup_joined(&space_data1.space_address, &space_data1.agent_id),
+            Some(agent1_uri.clone())
+        );
+        assert_eq!(
+            sim2h.lookup_joined(&space_data2.space_address, &space_data2.agent_id),
+            Some(agent2_uri.clone())
+        );
+
     }
 }
