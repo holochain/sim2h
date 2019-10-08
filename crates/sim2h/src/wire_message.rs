@@ -5,7 +5,6 @@ use std::convert::TryFrom;
 
 pub type Sim2hWireError = String;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireMessage {
     ClientToLib3h(ClientToLib3h),

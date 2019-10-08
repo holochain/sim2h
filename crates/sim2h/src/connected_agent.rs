@@ -10,7 +10,6 @@ pub enum ConnectedAgent {
     JoinedSpace(SpaceHash, AgentId),
 }
 
-#[allow(dead_code)]
 impl ConnectedAgent {
     pub fn new() -> ConnectedAgent {
         ConnectedAgent::Limbo

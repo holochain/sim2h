@@ -162,7 +162,6 @@ impl From<&HashSet<(Address, Address)>> for AspectList {
     }
 }
 
-#[allow(dead_code)]
 pub struct Sim2h {
     pub bound_uri: Option<Lib3hUri>,
     connection_states: RwLock<HashMap<Lib3hUri, ConnectedAgent>>,
@@ -170,7 +169,6 @@ pub struct Sim2h {
     transport: Detach<TransportActorParentWrapperDyn<Self>>,
 }
 
-#[allow(dead_code)]
 impl Sim2h {
     pub fn new(transport: DynTransportActor, bind_spec: Lib3hUri) -> Self {
         let t = Detach::new(TransportActorParentWrapperDyn::new(transport, "transport_"));
