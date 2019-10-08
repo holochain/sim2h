@@ -32,6 +32,12 @@ use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
 };
+use log::{debug, error, info, warn};
+use std::collections::HashSet;
+use url::Url;
+use rand::Rng;
+
+pub use wire_message::WireMessage;
 
 pub struct Space {
     agents: HashMap<AgentId, Lib3hUri>,
@@ -217,6 +223,21 @@ impl Sim2h {
         self.send(uri, &wire_message);
     }
 
+    fn request_gossiping_list(
+        &mut self,
+        uri: Lib3hUri,
+        space_address: SpaceHash,
+        provider_agent_id: AgentId,
+    ) {
+        let wire_message =
+            WireMessage::Lib3hToClient(Lib3hToClient::HandleGetGossipingEntryList(GetListData {
+                request_id: "".into(),
+                space_address,
+                provider_agent_id,
+            }));
+        self.send(uri, &wire_message);
+    }
+
     // adds an agent to a space
     fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
         if let Some(ConnectedAgent::Limbo) = self.get_connection(uri) {
@@ -242,6 +263,11 @@ impl Sim2h {
                 data.agent_id, data.space_address
             );
             self.request_authoring_list(
+                uri.clone(),
+                data.space_address.clone(),
+                data.agent_id.clone(),
+            );
+            self.request_gossiping_list(
                 uri.clone(),
                 data.space_address.clone(),
                 data.agent_id.clone(),
@@ -486,12 +512,96 @@ impl Sim2h {
                 }
                 Ok(None)
             }
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetGossipingEntryListResult(list_data)) => {
+                debug!("GOT GOSSIPING LIST from {}", agent_id);
+                if (list_data.provider_agent_id != *agent_id) || (list_data.space_address != *space_address) {
+                    return Err(SPACE_MISMATCH_ERR_STR.into());
+                }
+                let (agents_in_space, aspects_missing_at_node) = {
+                    let space = self.spaces
+                        .get(space_address)
+                        .expect("This function should not get called if we don't have this space")
+                        .read();
+                    let aspects_missing_at_node = space
+                        .all_aspects()
+                        .diff(&AspectList::from(list_data.address_map));
+
+                    warn!("MISSING ASPECTS at {}:\n{}", agent_id, aspects_missing_at_node.pretty_string());
+
+                    let agents_in_space = space
+                        .all_agents()
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<Address>>();
+                    (agents_in_space, aspects_missing_at_node)
+                };
+
+                if agents_in_space.len() == 1 {
+                    error!("MISSING ASPECTS and no way to get them. Agent is alone in space..");
+                } else {
+                    let other_agents = agents_in_space
+                        .into_iter()
+                        .filter(|a| a!=agent_id)
+                        .collect::<Vec<_>>();
+
+                    let mut rng = rand::thread_rng();
+                    let random_agent_index = rng.gen_range(0, other_agents.len());
+                    let random_agent = other_agents
+                        .get(random_agent_index)
+                        .expect("Random generator must work as documented");
+
+                    debug!("FETCHING missing contents from RANDOM AGENT: {}", random_agent);
+
+                    for entry_address in aspects_missing_at_node.entry_addresses() {
+                        if let Some(aspect_address_list) = aspects_missing_at_node.per_entry(entry_address) {
+                            let wire_message = WireMessage::Lib3hToClient(
+                                Lib3hToClient::HandleFetchEntry(FetchEntryData {
+                                    request_id: agent_id.clone().into(),
+                                    space_address: space_address.clone(),
+                                    provider_agent_id: random_agent.clone(),
+                                    entry_address: entry_address.clone(),
+                                    aspect_address_list: Some(aspect_address_list.clone())
+                                })
+                            );
+                            debug!("SENDING FeTCH with ReQUest ID: {:?}", wire_message);
+                            self.send(uri.clone(), &wire_message);
+                        }
+                    }
+                }
+                Ok(None)
+            }
             WireMessage::Lib3hToClientResponse(
                 Lib3hToClientResponse::HandleFetchEntryResult(fetch_result)) => {
                 if (fetch_result.provider_agent_id != *agent_id) || (fetch_result.space_address != *space_address) {
                     return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
-                self.handle_new_entry_data(fetch_result.entry, space_address.clone(), agent_id.clone());
+                debug!("HANDLE FETCH ENTRY RESULT: {:?}", fetch_result);
+                if fetch_result.request_id == String::from("") {
+                    debug!("Got FetchEntry result form {} without request id - must be from authoring list", agent_id);
+                    self.handle_new_entry_data(fetch_result.entry, space_address.clone(), agent_id.clone());
+                } else {
+                    debug!("Got FetchEntry result with request id {} - this is for gossiping to agent with incomplete data", fetch_result.request_id);
+                    let to_agent_id = Address::from(fetch_result.request_id);
+                    let maybe_url = self.lookup_joined(space_address, &to_agent_id);;
+                    if maybe_url.is_none() {
+                        error!("Got FetchEntryResult with request id that is not a known agent id. My hack didn't work?");
+                        return Ok(None)
+                    }
+                    let url = maybe_url.unwrap();
+                    for aspect in fetch_result.entry.aspect_list {
+                        let store_message = WireMessage::Lib3hToClient(Lib3hToClient::HandleStoreEntryAspect(
+                            StoreEntryAspectData {
+                                request_id: "".into(),
+                                space_address: space_address.clone(),
+                                provider_agent_id: agent_id.clone(),
+                                entry_address: fetch_result.entry.entry_address.clone(),
+                                entry_aspect: aspect,
+                            },
+                        ));
+                        self.send(url.clone(), &store_message);
+                    }
+                }
+
                 Ok(None)
             }
             _ => {
