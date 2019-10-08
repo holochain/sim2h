@@ -22,7 +22,7 @@ use std::{collections::HashMap, convert::TryFrom};
 
 use connected_agent::*;
 use lib3h_protocol::data_types::{StoreEntryAspectData, FetchEntryData, Opaque, GetListData, EntryData};
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use url::Url;
 pub use wire_message::WireMessage;
 use std::collections::HashSet;
@@ -70,6 +70,7 @@ impl Space {
     }
 }
 
+#[derive(Debug)]
 pub struct AspectList(HashMap<Address, Vec<Address>>);
 impl AspectList {
     /// Returns an AspectList list that contains every entry aspect
@@ -98,6 +99,16 @@ impl AspectList {
 
     pub fn per_entry(&self, entry_address: &Address) -> Option<&Vec<Address>> {
         self.0.get(entry_address)
+    }
+
+    pub fn pretty_string(&self) -> String {
+        self.0
+            .iter()
+            .map(|(entry, aspects)| {
+                format!("{}: [{}]", entry, aspects.iter().cloned().map(|i|i.into()).collect::<Vec<String>>().join(", "))
+            })
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 }
 
@@ -237,7 +248,7 @@ impl Sim2h {
                 provider_agent_id,
             })
         );
-        self.send(uri, wire_message.into());
+        self.send(uri, &wire_message);
     }
 
     // adds an agent to a space
@@ -250,13 +261,14 @@ impl Sim2h {
             if !self.spaces.contains_key(&data.space_address) {
                 self.spaces
                     .insert(data.space_address.clone(), RwLock::new(Space::new()));
+                info!("\n\n+++++++++++++++\nNew Space: {}\n+++++++++++++++\n", data.space_address);
             }
             self.spaces
                 .get(&data.space_address)
                 .unwrap()
                 .write()
                 .join_agent(data.agent_id.clone(), uri.clone());
-            debug!(
+            info!(
                 "Agent {:?} joined space {:?}",
                 data.agent_id, data.space_address
             );
@@ -304,7 +316,7 @@ impl Sim2h {
 
     // handler for incoming connections
     fn handle_incoming_connect(&self, uri: Lib3hUri) -> Sim2hResult<bool> {
-        debug!("New connection from {:?}", uri);
+        info!("New connection from {:?}", uri);
         if let Some(_old) = self
             .connection_states
             .write()
@@ -413,7 +425,7 @@ impl Sim2h {
         agent_id: &AgentId,
         message: WireMessage,
     ) -> Sim2hResult<Option<(bool, Lib3hUri, WireMessage)>> {
-        debug!("Handling message from agent {:?}: {:?}", agent_id, message);
+        debug!(">>IN>> {} from {}", message.message_type(), agent_id.to_string());
         match message {
             // First make sure we are not receiving a message in the wrong direction.
             // Panic for now so we can easily spot a mistake.
@@ -470,6 +482,7 @@ impl Sim2h {
                 Ok(None)
             }
             WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetAuthoringEntryListResult(list_data)) => {
+                debug!("GOT AUTHORING LIST from {}", agent_id);
                 if (list_data.provider_agent_id != *agent_id) || (list_data.space_address != *space_address) {
                     return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
@@ -480,6 +493,7 @@ impl Sim2h {
                         .read()
                         .all_aspects()
                     );
+                debug!("UNSEEN ASPECTS:\n{}", unseen_aspects.pretty_string());
                 for entry_address in unseen_aspects.entry_addresses() {
                     if let Some(aspect_address_list) = unseen_aspects.per_entry(entry_address) {
                         let wire_message = WireMessage::Lib3hToClient(
@@ -491,7 +505,7 @@ impl Sim2h {
                                 aspect_address_list: Some(aspect_address_list.clone())
                             })
                         );
-                        self.send(uri.clone(), wire_message.into());
+                        self.send(uri.clone(), &wire_message);
                     }
                 }
                 Ok(None)
@@ -517,17 +531,34 @@ impl Sim2h {
         space_address: SpaceHash,
         provider: Address
     ) {
-        debug!("Got new entry data - broadcasting all aspects to all agents...");
+        let aspect_addresses = entry_data.aspect_list
+            .iter()
+            .cloned()
+            .map(|aspect_data| aspect_data.aspect_address)
+            .collect::<Vec<_>>();
+        let mut map = HashMap::new();
+        map.insert(entry_data.entry_address.clone(), aspect_addresses);
+        let aspect_list = AspectList::from(map);
+        debug!("GOT NEW ASPECTS:\n{}", aspect_list.pretty_string());
+
         for aspect in entry_data.aspect_list {
             // 1. Add hashes to our global list of all aspects in this space:
-            self.spaces
-                .get(&space_address)
-                .expect("This function should not get called if we don't have this space")
-                .write()
-                .add_aspect(
+            {
+                let mut space = self.spaces
+                    .get(&space_address)
+                    .expect("This function should not get called if we don't have this space")
+                    .write();
+                space.add_aspect(
                     entry_data.entry_address.clone(),
                     aspect.aspect_address.clone(),
                 );
+                debug!(
+                    "Space {} now knows about these aspects:\n{}",
+                    space_address,
+                    space.all_aspects_hashes.pretty_string()
+                );
+            }
+
             // 2. Create store message
             let store_message = WireMessage::Lib3hToClient(
                 Lib3hToClient::HandleStoreEntryAspect(StoreEntryAspectData {
@@ -558,12 +589,14 @@ impl Sim2h {
             .collect::<Vec<_>>();
         for uri in all_uris {
             debug!("Broadcast: Sending to {:?}", uri);
-            self.send(uri, msg.clone().into());
+            self.send(uri, msg);
         }
         Ok(())
     }
 
-    fn send(&mut self, uri: Lib3hUri, payload: Opaque) {
+    fn send(&mut self, uri: Lib3hUri, msg: &WireMessage) {
+        debug!(">>OUT>> {} to {}", msg.message_type(), uri);
+        let payload: Opaque = msg.clone().into();
         let send_result = self.transport.request(
             Span::fixme(),
             RequestToChild::SendMessage {

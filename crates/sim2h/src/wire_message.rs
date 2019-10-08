@@ -17,6 +17,46 @@ pub enum WireMessage {
     SignatureChallengeResponse(String),
 }
 
+impl WireMessage {
+    pub fn message_type(&self) -> String {
+        String::from(match self {
+            WireMessage::ClientToLib3h(ClientToLib3h::Bootstrap(_)) => "[C>L]Bootstrap",
+            WireMessage::ClientToLib3h(ClientToLib3h::FetchEntry(_)) => "[C>L]FetchEntry",
+            WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => "[C>L]JoinSpace",
+            WireMessage::ClientToLib3h(ClientToLib3h::LeaveSpace (_)) => "[C>L]LeaveSpace",
+            WireMessage::ClientToLib3h(ClientToLib3h::PublishEntry(_)) => "[C>L]PublishEntry",
+            WireMessage::ClientToLib3h(ClientToLib3h::QueryEntry(_)) => "[C>L]QueryEntry",
+            WireMessage::ClientToLib3h(ClientToLib3h::SendDirectMessage(_)) => "[C>L]SendDirectmessage",
+            WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::BootstrapSuccess) => "[C<L]BootsrapSuccess",
+            WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::FetchEntryResult(_)) => "[C<L]FetchEntryResult",
+            WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::JoinSpaceResult) => "[C<L]JoinSpaceResult",
+            WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::LeaveSpaceResult) => "[C<L]LeaveSpaceResult",
+            WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::QueryEntryResult(_)) => "[C<L]QueryEntryResult",
+            WireMessage::ClientToLib3hResponse(ClientToLib3hResponse::SendDirectMessageResult(_)) => "[C<L]SendDirectMessageResult",
+            WireMessage::Lib3hToClient(Lib3hToClient::Connected(_)) => "[L>C]Connected",
+            WireMessage::Lib3hToClient(Lib3hToClient::HandleDropEntry(_)) => "[L>C]HandleDropEntry",
+            WireMessage::Lib3hToClient(Lib3hToClient::HandleFetchEntry(_)) => "[L>C]HandleFetchEntry",
+            WireMessage::Lib3hToClient(Lib3hToClient::HandleGetAuthoringEntryList(_)) => "[L>C]HandleGetAuthoringList",
+            WireMessage::Lib3hToClient(Lib3hToClient::HandleGetGossipingEntryList(_)) => "[L>C]HandleGetGossipingEntryList",
+            WireMessage::Lib3hToClient(Lib3hToClient::HandleQueryEntry(_)) => "[L>C]HandleQueryEntry",
+            WireMessage::Lib3hToClient(Lib3hToClient::HandleSendDirectMessage(_)) => "[L>C]HandleSendDirectMessage",
+            WireMessage::Lib3hToClient(Lib3hToClient::HandleStoreEntryAspect(_)) => "[L>C]HandleStoreEntryAspect",
+            WireMessage::Lib3hToClient(Lib3hToClient::SendDirectMessageResult(_)) => "[L>C]SendDirectMessageResult",
+            WireMessage::Lib3hToClient(Lib3hToClient::Unbound(_)) => "[L>C]Unbound",
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleDropEntryResult) => "[L<C]HandleDropEntryResult",
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleFetchEntryResult(_)) => "[L<C]HandleFetchEntryResult",
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetAuthoringEntryListResult(_)) => "[L<C]HandleGetAuthoringEntryListResult",
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetGossipingEntryListResult(_)) => "[L<C]HandleGetGossipingEntryListResult",
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleQueryEntryResult(_)) => "[L<C]HandleQueryEntryResult",
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleSendDirectMessageResult(_)) => "[L<C]HandleSendDirectMessageResult",
+            WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleStoreEntryAspectResult) => "[L<C]HandleStoreEntryAspectResult",
+            WireMessage::SignatureChallenge(_) => "[Signature Challenge]",
+            WireMessage::SignatureChallengeResponse(_) => "[Signature Challenge Response]",
+            WireMessage::Err(_) => "[Error] {:?}",
+        })
+    }
+}
+
 impl From<WireMessage> for Opaque {
     fn from(message: WireMessage) -> Opaque {
         serde_json::to_string(&message)
