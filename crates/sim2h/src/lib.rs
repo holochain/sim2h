@@ -308,16 +308,22 @@ impl Sim2h {
             if (data.agent_id != agent_id) || (data.space_address != space_address) {
                 Err(SPACE_MISMATCH_ERR_STR.into())
             } else {
-                self.connection_states.write().remove(uri).unwrap();
-                self.spaces
-                    .get(&data.space_address)
-                    .unwrap()
-                    .write()
-                    .remove_agent(&data.agent_id);
+                self.disconnect(uri);
                 Ok(())
             }
         } else {
             Err(format!("no joined agent found at {} ", &uri).into())
+        }
+    }
+
+    // removes a uri from connection and from spaces
+    fn disconnect(&self, uri: &Lib3hUri) {
+        if let Some(ConnectedAgent::JoinedSpace(space_address, agent_id)) = self.connection_states.write().remove(uri) {
+            self.spaces
+                .get(&space_address)
+                .unwrap()
+                .write()
+                .remove_agent(&agent_id);
         }
     }
 
@@ -429,10 +435,18 @@ impl Sim2h {
                         error!("Error handling incomming connection: {:?}", error);
                     }
                 }
-                RequestToParent::ErrorOccured { uri, error } => error!(
-                    "Transport error occured on connection to {:?}: {:?}",
-                    uri, error
-                ),
+                RequestToParent::ErrorOccured { uri, error } => {
+                    if error.to_string() == "Protocol(\"Connection reset without closing handshake\")" {
+                        debug!("Disconnecting {} after connection reset", uri);
+                        self.disconnect(&uri);
+                    }
+                    else {
+                        error!(
+                            "Transport error occured on connection to {:?}: {:?}",
+                            uri, error
+                                ,)
+                    }
+                }
             }
         }
         Ok(())
