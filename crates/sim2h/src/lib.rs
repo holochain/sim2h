@@ -18,13 +18,13 @@ use lib3h_protocol::{data_types::SpaceData, protocol::*, types::SpaceHash, uri::
 use lib3h_zombie_actor::prelude::*;
 
 use parking_lot::RwLock;
-use std::{convert::TryFrom, collections::HashMap};
+use std::{collections::HashMap, convert::TryFrom};
 
 use connected_agent::*;
-pub use wire_message::WireMessage;
-use url::Url;
-use log::{debug, error, warn};
 use lib3h_protocol::data_types::StoreEntryAspectData;
+use log::{debug, error, warn};
+use url::Url;
+pub use wire_message::WireMessage;
 
 #[allow(dead_code)]
 pub struct Sim2h {
@@ -64,7 +64,9 @@ impl Sim2h {
         sim2h
     }
 
-    pub fn with_detached_transport(transport: Detach<TransportActorParentWrapperDyn<Self>>) -> Self {
+    pub fn with_detached_transport(
+        transport: Detach<TransportActorParentWrapperDyn<Self>>,
+    ) -> Self {
         Sim2h {
             bound_uri: None,
             connection_states: RwLock::new(HashMap::new()),
@@ -80,28 +82,35 @@ impl Sim2h {
 
         // channel for making an async call sync
         let (tx, rx) = crossbeam_channel::unbounded();
-        self.transport.request(
-            Span::todo("Find out how to use spans the right way"),
-            RequestToChild::Bind {
-                spec: url.into(),
-            },
-            // callback just notifies channel so
-            Box::new(move |_owner, response| {
-                let result = match response {
-                    GhostCallbackData::Timeout(bt) => Err(format!("Bind timed out. Backtrace: {:?}", bt)),
-                    GhostCallbackData::Response(Ok(RequestToChildResponse::Bind(bind_result_data))) =>
-                        Ok(bind_result_data.bound_url),
-                    GhostCallbackData::Response(Err(transport_error)) =>
-                        Err(format!("Error during bind: {:?}", transport_error)),
-                    _ => Err(String::from("Got unexpected response from transport actor during bind")),
-                };
-                let _ = tx.send(result);
-                Ok(())
-            }),
-        ).map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
+        self.transport
+            .request(
+                Span::todo("Find out how to use spans the right way"),
+                RequestToChild::Bind { spec: url.into() },
+                // callback just notifies channel so
+                Box::new(move |_owner, response| {
+                    let result = match response {
+                        GhostCallbackData::Timeout(bt) => {
+                            Err(format!("Bind timed out. Backtrace: {:?}", bt))
+                        }
+                        GhostCallbackData::Response(Ok(RequestToChildResponse::Bind(
+                            bind_result_data,
+                        ))) => Ok(bind_result_data.bound_url),
+                        GhostCallbackData::Response(Err(transport_error)) => {
+                            Err(format!("Error during bind: {:?}", transport_error))
+                        }
+                        _ => Err(String::from(
+                            "Got unexpected response from transport actor during bind",
+                        )),
+                    };
+                    let _ = tx.send(result);
+                    Ok(())
+                }),
+            )
+            .map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
 
         for _ in 1..3 {
-            detach_run!(&mut self.transport, |t| t.process(self)).map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
+            detach_run!(&mut self.transport, |t| t.process(self))
+                .map_err(|ghost_error| format!("GhostError during bind: {:?}", ghost_error))?;
         }
 
         rx.recv().expect("local channel to work")
@@ -115,10 +124,18 @@ impl Sim2h {
                 ConnectedAgent::JoinedSpace(data.space_address.clone(), data.agent_id.clone()),
             );
             if !self.spaces.contains_key(&data.space_address) {
-                self.spaces.insert(data.space_address.clone(), RwLock::new(HashMap::new()));
+                self.spaces
+                    .insert(data.space_address.clone(), RwLock::new(HashMap::new()));
             }
-            self.spaces.get(&data.space_address).unwrap().write().insert(data.agent_id.clone(), uri.clone());
-            debug!("Agent {:?} joined space {:?}", data.agent_id, data.space_address);
+            self.spaces
+                .get(&data.space_address)
+                .unwrap()
+                .write()
+                .insert(data.agent_id.clone(), uri.clone());
+            debug!(
+                "Agent {:?} joined space {:?}",
+                data.agent_id, data.space_address
+            );
             Ok(())
         } else {
             Err(format!("no agent found in limbo at {} ", uri).into())
@@ -133,6 +150,11 @@ impl Sim2h {
                 Err(SPACE_MISMATCH_ERR_STR.into())
             } else {
                 self.connection_states.write().remove(uri).unwrap();
+                self.spaces
+                    .get(&data.space_address)
+                    .unwrap()
+                    .write()
+                    .remove(&data.agent_id);
                 Ok(())
             }
         } else {
@@ -147,13 +169,10 @@ impl Sim2h {
     }
 
     // find out if an agent is in a space or not and return its URI
-    // TODO get from a cache instead of iterating
     fn lookup_joined(&self, space_address: &SpaceHash, agent_id: &AgentId) -> Option<Lib3hUri> {
-        for (key, val) in self.connection_states.read().iter() {
-            if let ConnectedAgent::JoinedSpace(item_space, item_agent) = val {
-                if item_space == space_address && item_agent == agent_id {
-                    return Some(key.clone());
-                }
+        for (found_agent, uri) in self.spaces.get(&space_address)?.read().iter() {
+            if found_agent == agent_id {
+                return Some(uri.clone());
             }
         }
         None
@@ -224,8 +243,11 @@ impl Sim2h {
     pub fn process(&mut self) -> Sim2hResult<()> {
         detach_run!(&mut self.transport, |t| t.process(self)).map_err(|e| format!("{:?}", e))?;
         for mut transport_message in self.transport.drain_messages() {
-            match transport_message.take_message().expect("GhostMessage must have a message") {
-                RequestToParent::ReceivedData {uri, payload} => {
+            match transport_message
+                .take_message()
+                .expect("GhostMessage must have a message")
+            {
+                RequestToParent::ReceivedData { uri, payload } => {
                     match WireMessage::try_from(&payload) {
                         Ok(wire_message) =>
                             if let Err(error) = self.handle_message(&uri, wire_message) {
@@ -239,12 +261,15 @@ impl Sim2h {
                             )
                     }
                 }
-                RequestToParent::IncomingConnection {uri} =>
+                RequestToParent::IncomingConnection { uri } => {
                     if let Err(error) = self.handle_incoming_connect(uri) {
                         error!("Error handling incomming connection: {:?}", error);
-                    },
-                RequestToParent::ErrorOccured {uri, error} =>
-                    error!("Transport error occured on connection to {:?}: {:?}", uri, error),
+                    }
+                }
+                RequestToParent::ErrorOccured { uri, error } => error!(
+                    "Transport error occured on connection to {:?}: {:?}",
+                    uri, error
+                ),
             }
         }
         Ok(())
@@ -294,7 +319,8 @@ impl Sim2h {
                             provider_agent_id: data.provider_agent_id.clone(),
                             entry_address: data.entry.entry_address.clone(),
                             entry_aspect: aspect,
-                    }));
+                        }),
+                    );
                     if let Err(e) = self.broadcast(data.space_address.clone(), &store_message) {
                         error!("Error during broadcast: {:?}", e);
                     }
@@ -304,130 +330,137 @@ impl Sim2h {
             _ => {
                 warn!("Ignoring unimplemented message");
                 Err("Message not implemented".into())
-            },
+            }
         }
     }
 
     /*
-        // the message better be a join
-        fn process_limbo(agent,payload) {}
+            // the message better be a join
+            fn process_limbo(agent,payload) {}
 
-        // cache messages cus we are waiting for confirmation of join
-        fn self.process_join_request(agent,payload) {}
+            // cache messages cus we are waiting for confirmation of join
+            fn self.process_join_request(agent,payload) {}
 
-        fn process_next_message(&self) {
-            match transport.drain() {
-                RequestToParent::ReceivedData{uri, payload} => {
-                    self.handle_message(uri,payload)?
-                }
-                RequestToParent::IncomingConnection{uri} => {
-                    self.handle_incominng_connection(uri)?
-                }
-
-                RequestToParent::ConnectionClosed{uri} => {
-                    self.connection_states.writ } else if let Ok(msg) = Lib3hToClientResponse::try_from(payload) e().remove(uri);  // ignore if we don't have it
-                }
-            }
-
-        }
-
-        fn proxy(&self, space_address: Address, agent_id: AgentId, payload: Opaque) -> Result<Option<Opaque>, ProxyError> {
-
-            match WireMessage::try_from(payload)? {
-                ClientToLib3h(msg) => match msg {
-                    // -- Connection -- //
-                    /// create an explicit connection to a remote peer
-                    Bootstrap(BootstrapData) => {// handled in client}
-
-                    /// Order the engine to leave the network of the specified space.
-                    LeaveSpace(SpaceData) => {
-                        // remove from map
-                        self.spaces
-                            .get(space_address)?
-                            .write()
-                            .take(agent_id)
-                            .and_then(|uri| {
-                                self.connection_states.write().remove(uri);
-                                self.transport.send(RequestToChild::Disconnect(uri));
-                            })
+            fn process_next_message(&self) {
+                match transport.drain() {
+                    RequestToParent::ReceivedData{uri, payload} => {
+                        self.handle_message(uri,payload)?
+                    }
+                    RequestToParent::IncomingConnection{uri} => {
+                        self.handle_incominng_connection(uri)?
                     }
 
-                    // -- Entry -- //
-                    /// Request an Entry from the dht network
-                    FetchEntry(FetchEntryData), // NOTE: MAY BE DEPRECATED
-                    /// Publish data to the dht (event)                HandleGetGossipingEntryListResult(EntryListData) => {}
+                    RequestToParent::ConnectionClosed{uri} => {
+                        self.connection_states.writ } else if let Ok(msg) = Lib3hToClientResponse::try_from(payload) e().remove(uri);  // ignore if we don't have it
+                    }
+                }
 
-                    PublishEntry(provided_entry_data) => {
-                        for aspect_data in provided_entry_data.entry_data.aspect_list {
-                            let broadcast_msg = WireMessage::Lib3hToClient::HandleStoreEntryAspect(
-                                StoreEntryAspectData {
-                                    request_id: String,
-                                    space_address: provided_entry_data.space_address.clone(),
-                                    provider_agent_id: provided_entry_data.provider_agent_id.clone(),
-                                    entry_address: Address,
-                                    entry_aspect: EntryAspectData,
-                                });
-                            broadcast(space_address, broadcast_msg)?;
+            }
+
+            fn proxy(&self, space_address: Address, agent_id: AgentId, payload: Opaque) -> Result<Option<Opaque>, ProxyError> {
+
+                match WireMessage::try_from(payload)? {
+                    ClientToLib3h(msg) => match msg {
+                        // -- Connection -- //
+                        /// create an explicit connection to a remote peer
+                        Bootstrap(BootstrapData) => {// handled in client}
+
+                        /// Order the engine to leave the network of the specified space.
+                        LeaveSpace(SpaceData) => {
+                            // remove from map
+                            self.spaces
+                                .get(space_address)?
+                                .write()
+                                .take(agent_id)
+                                .and_then(|uri| {
+                                    self.connection_states.write().remove(uri);
+                                    self.transport.send(RequestToChild::Disconnect(uri));
+                                })
                         }
 
-                    }
-                    /// Tell Engine that Client is holding this entry (event)
-                    HoldEntry(ProvidedEntryData) => {}
-                    /// Request some info / data from a Entry
-                    QueryEntry(QueryEntryData) => {}
-                },
-              Lib3hToClientResponse(msg) => msg {
-                    /// Our response to a direct message from another agent.
-                    HandleSendDirectMessageResult(DirectMessageData) => {}
-                    /// Successful data response for a `HandleFetchEntryData` request
-                    HandleFetchEntryResult(FetchEntryResultData) => {}
-                    HandleStoreEntryAspectResult => {}
-                    HandleDropEntryResult => {}
-                    /// Response to a `HandleQueryEntry` request
-                    HandleQueryEntryResult(QueryEntryResultData) => {}
-                    // -- Entry lists -- //
-                    HandleGetAuthoringEntryListResult(EntryListData) => {}
-                    HandleGetGossipingEntryListResult(EntryListData) => {}
-                },
-              _ => WireMessage::Err(...)
+                        // -- Entry -- //
+                        /// Request an Entry from the dht network
+                        FetchEntry(FetchEntryData), // NOTE: MAY BE DEPRECATED
+                        /// Publish data to the dht (event)                HandleGetGossipingEntryListResult(EntryListData) => {}
+
+                        PublishEntry(provided_entry_data) => {
+                            for aspect_data in provided_entry_data.entry_data.aspect_list {
+                                let broadcast_msg = WireMessage::Lib3hToClient::HandleStoreEntryAspect(
+                                    StoreEntryAspectData {
+                                        request_id: String,
+                                        space_address: provided_entry_data.space_address.clone(),
+                                        provider_agent_id: provided_entry_data.provider_agent_id.clone(),
+                                        entry_address: Address,
+                                        entry_aspect: EntryAspectData,
+                                    });
+                                broadcast(space_address, broadcast_msg)?;
+                            }
+
+                        }
+                        /// Tell Engine that Client is holding this entry (event)
+                        HoldEntry(ProvidedEntryData) => {}
+                        /// Request some info / data from a Entry
+                        QueryEntry(QueryEntryData) => {}
+                    },
+                  Lib3hToClientResponse(msg) => msg {
+                        /// Our response to a direct message from another agent.
+                        HandleSendDirectMessageResult(DirectMessageData) => {}
+                        /// Successful data response for a `HandleFetchEntryData` request
+                        HandleFetchEntryResult(FetchEntryResultData) => {}
+                        HandleStoreEntryAspectResult => {}
+                        HandleDropEntryResult => {}
+                        /// Response to a `HandleQueryEntry` request
+                        HandleQueryEntryResult(QueryEntryResultData) => {}
+                        // -- Entry lists -- //
+                        HandleGetAuthoringEntryListResult(EntryListData) => {}
+                        HandleGetGossipingEntryListResult(EntryListData) => {}
+                    },
+                  _ => WireMessage::Err(...)
+                }
+
+
+
+                let {space, from,to} = msg;
+                if from != agent_id_from_ws {
+                    return Err(...)
+                }
+
+                //if do we have a connected agent
+                let to_agent = self.lookup(space, to).ok_or_else(|| Err(...))?;
+
+                match msg {
+                    SendDirectMessage | SendDirectMessageResult => to_agent.forward(msg),
+                    Publish => self.broadcast(space_address, StoreEntryAspect(...))
+                }
+
             }
-
-
-
-            let {space, from,to} = msg;
-            if from != agent_id_from_ws {
-                return Err(...)
-            }
-
-            //if do we have a connected agent
-            let to_agent = self.lookup(space, to).ok_or_else(|| Err(...))?;
-
-            match msg {
-                SendDirectMessage | SendDirectMessageResult => to_agent.forward(msg),
-                Publish => self.broadcast(space_address, StoreEntryAspect(...))
-            }
-
-        }
-*/
-    fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage) -> Result<(), String>{
+    */
+    fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage) -> Sim2hResult<()> {
         debug!("Broadcast in space: {:?}", space);
-        for uri in self.spaces.get(&space).ok_or("No such space")?.read().values().cloned() {
+        for uri in self
+            .spaces
+            .get(&space)
+            .ok_or("No such space")?
+            .read()
+            .values()
+            .cloned()
+        {
             debug!("Broadcast: Sending to {:?}", uri);
-            let send_result = self.transport
-                .request(
-                    Span::fixme(),
-                    RequestToChild::SendMessage { uri, payload: msg.clone().into() },
-                    Box::new(|_me, response| match response {
-                        GhostCallbackData::Response(Ok(
-                                                        RequestToChildResponse::SendMessageSuccess,
-                                                    )) => Ok(()),
-                        GhostCallbackData::Response(Err(e)) => Err(e.into()),
-                        GhostCallbackData::Timeout(bt) => {
-                            Err(format!("timeout: {:?}", bt).into())
-                        }
-                        _ => Err("bad response type".into()),
-                    }),
-                );
+            let send_result = self.transport.request(
+                Span::fixme(),
+                RequestToChild::SendMessage {
+                    uri,
+                    payload: msg.clone().into(),
+                },
+                Box::new(|_me, response| match response {
+                    GhostCallbackData::Response(Ok(RequestToChildResponse::SendMessageSuccess)) => {
+                        Ok(())
+                    }
+                    GhostCallbackData::Response(Err(e)) => Err(e.into()),
+                    GhostCallbackData::Timeout(bt) => Err(format!("timeout: {:?}", bt).into()),
+                    _ => Err("bad response type".into()),
+                }),
+            );
 
             if let Err(e) = send_result {
                 error!("GhostError during broadcast send: {:?}", e)
@@ -605,6 +638,10 @@ pub mod tests {
         assert_eq!(result, Ok(()));
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(result, None);
+        assert_eq!(
+            sim2h.lookup_joined(&data.space_address, &data.agent_id),
+            None
+        );
     }
 
     #[test]
@@ -741,19 +778,19 @@ pub mod tests {
         // connect them to sim2h with join messages
         let space_data1 = make_test_space_data_with_agent("agent1".into());
         let space_data2 = make_test_space_data_with_agent("agent2".into());
-        let join1 : Opaque = make_test_join_message_with_space_data(space_data1.clone()).into();
-        let join2 : Opaque = make_test_join_message_with_space_data(space_data2.clone()).into();
+        let join1: Opaque = make_test_join_message_with_space_data(space_data1.clone()).into();
+        let join2: Opaque = make_test_join_message_with_space_data(space_data2.clone()).into();
         {
-        let mut net = network.lock().unwrap();
-        let server = net
-            .get_server(&sim2h_uri)
-            .expect("there should be a server for to_uri");
-        server.request_connect(&agent1_uri).expect("can connect");
-        let result = server.post(&agent1_uri, &join1.to_vec());
-        assert_eq!(result, Ok(()));
-        server.request_connect(&agent2_uri).expect("can connect");
-        let result = server.post(&agent2_uri, &join2.to_vec());
-        assert_eq!(result, Ok(()));
+            let mut net = network.lock().unwrap();
+            let server = net
+                .get_server(&sim2h_uri)
+                .expect("there should be a server for to_uri");
+            server.request_connect(&agent1_uri).expect("can connect");
+            let result = server.post(&agent1_uri, &join1.to_vec());
+            assert_eq!(result, Ok(()));
+            server.request_connect(&agent2_uri).expect("can connect");
+            let result = server.post(&agent2_uri, &join2.to_vec());
+            assert_eq!(result, Ok(()));
         }
 
         let _result = sim2h.process();
@@ -766,6 +803,5 @@ pub mod tests {
             sim2h.lookup_joined(&space_data2.space_address, &space_data2.agent_id),
             Some(agent2_uri.clone())
         );
-
     }
 }
