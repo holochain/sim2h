@@ -14,18 +14,22 @@ use crate::error::*;
 use detach::prelude::*;
 use holochain_tracing::Span;
 use lib3h::transport::protocol::*;
-use lib3h_protocol::{data_types::SpaceData, protocol::*, types::SpaceHash, uri::Lib3hUri, Address};
+use lib3h_protocol::{
+    data_types::SpaceData, protocol::*, types::SpaceHash, uri::Lib3hUri, Address,
+};
 use lib3h_zombie_actor::prelude::*;
 
 use parking_lot::RwLock;
 use std::{collections::HashMap, convert::TryFrom};
 
 use connected_agent::*;
-use lib3h_protocol::data_types::{StoreEntryAspectData, FetchEntryData, Opaque, GetListData, EntryData};
+use lib3h_protocol::data_types::{
+    EntryData, FetchEntryData, GetListData, Opaque, StoreEntryAspectData,
+};
 use log::{debug, error, info, warn};
+use std::collections::HashSet;
 use url::Url;
 pub use wire_message::WireMessage;
-use std::collections::HashSet;
 
 pub struct Space {
     agents: HashMap<AgentId, Lib3hUri>,
@@ -78,10 +82,11 @@ impl AspectList {
     pub fn diff(&self, other: &AspectList) -> AspectList {
         let self_set = HashSet::<(Address, Address)>::from(self);
         let other_set = HashSet::<(Address, Address)>::from(other);
-        AspectList::from(&self_set
-            .difference(&other_set)
-            .cloned()
-            .collect::<HashSet<(Address, Address)>>()
+        AspectList::from(
+            &self_set
+                .difference(&other_set)
+                .cloned()
+                .collect::<HashSet<(Address, Address)>>(),
         )
     }
 
@@ -105,7 +110,16 @@ impl AspectList {
         self.0
             .iter()
             .map(|(entry, aspects)| {
-                format!("{}: [{}]", entry, aspects.iter().cloned().map(|i|i.into()).collect::<Vec<String>>().join(", "))
+                format!(
+                    "{}: [{}]",
+                    entry,
+                    aspects
+                        .iter()
+                        .cloned()
+                        .map(|i| i.into())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
             })
             .collect::<Vec<String>>()
             .join("\n")
@@ -114,7 +128,7 @@ impl AspectList {
 
 impl From<HashMap<Address, Vec<Address>>> for AspectList {
     fn from(map: HashMap<Address, Vec<Address>>) -> AspectList {
-        AspectList{0: map}
+        AspectList { 0: map }
     }
 }
 
@@ -137,8 +151,10 @@ impl From<&HashSet<(Address, Address)>> for AspectList {
             if !result.contains_key(entry_address) {
                 result.insert(entry_address.clone(), Vec::new());
             }
-            result.get_mut(entry_address).unwrap().push(aspect_address.clone());
-
+            result
+                .get_mut(entry_address)
+                .unwrap()
+                .push(aspect_address.clone());
         }
         AspectList::from(result)
     }
@@ -239,15 +255,14 @@ impl Sim2h {
         &mut self,
         uri: Lib3hUri,
         space_address: SpaceHash,
-        provider_agent_id: AgentId
+        provider_agent_id: AgentId,
     ) {
-        let wire_message = WireMessage::Lib3hToClient(
-            Lib3hToClient::HandleGetAuthoringEntryList(GetListData {
+        let wire_message =
+            WireMessage::Lib3hToClient(Lib3hToClient::HandleGetAuthoringEntryList(GetListData {
                 request_id: "".into(),
                 space_address,
                 provider_agent_id,
-            })
-        );
+            }));
         self.send(uri, &wire_message);
     }
 
@@ -261,7 +276,10 @@ impl Sim2h {
             if !self.spaces.contains_key(&data.space_address) {
                 self.spaces
                     .insert(data.space_address.clone(), RwLock::new(Space::new()));
-                info!("\n\n+++++++++++++++\nNew Space: {}\n+++++++++++++++\n", data.space_address);
+                info!(
+                    "\n\n+++++++++++++++\nNew Space: {}\n+++++++++++++++\n",
+                    data.space_address
+                );
             }
             self.spaces
                 .get(&data.space_address)
@@ -275,7 +293,7 @@ impl Sim2h {
             self.request_authoring_list(
                 uri.clone(),
                 data.space_address.clone(),
-                data.agent_id.clone()
+                data.agent_id.clone(),
             );
             Ok(())
         } else {
@@ -311,7 +329,10 @@ impl Sim2h {
 
     // find out if an agent is in a space or not and return its URI
     fn lookup_joined(&self, space_address: &SpaceHash, agent_id: &AgentId) -> Option<Lib3hUri> {
-        self.spaces.get(&space_address)?.read().agent_id_to_uri(agent_id)
+        self.spaces
+            .get(&space_address)?
+            .read()
+            .agent_id_to_uri(agent_id)
     }
 
     // handler for incoming connections
@@ -425,7 +446,11 @@ impl Sim2h {
         agent_id: &AgentId,
         message: WireMessage,
     ) -> Sim2hResult<Option<(bool, Lib3hUri, WireMessage)>> {
-        debug!(">>IN>> {} from {}", message.message_type(), agent_id.to_string());
+        debug!(
+            ">>IN>> {} from {}",
+            message.message_type(),
+            agent_id.to_string()
+        );
         match message {
             // First make sure we are not receiving a message in the wrong direction.
             // Panic for now so we can easily spot a mistake.
@@ -529,9 +554,10 @@ impl Sim2h {
         &mut self,
         entry_data: EntryData,
         space_address: SpaceHash,
-        provider: Address
+        provider: Address,
     ) {
-        let aspect_addresses = entry_data.aspect_list
+        let aspect_addresses = entry_data
+            .aspect_list
             .iter()
             .cloned()
             .map(|aspect_data| aspect_data.aspect_address)
@@ -544,7 +570,8 @@ impl Sim2h {
         for aspect in entry_data.aspect_list {
             // 1. Add hashes to our global list of all aspects in this space:
             {
-                let mut space = self.spaces
+                let mut space = self
+                    .spaces
                     .get(&space_address)
                     .expect("This function should not get called if we don't have this space")
                     .write();
@@ -560,15 +587,15 @@ impl Sim2h {
             }
 
             // 2. Create store message
-            let store_message = WireMessage::Lib3hToClient(
-                Lib3hToClient::HandleStoreEntryAspect(StoreEntryAspectData {
+            let store_message = WireMessage::Lib3hToClient(Lib3hToClient::HandleStoreEntryAspect(
+                StoreEntryAspectData {
                     request_id: "".into(),
                     space_address: space_address.clone(),
                     provider_agent_id: provider.clone(),
                     entry_address: entry_data.entry_address.clone(),
                     entry_aspect: aspect,
-                }),
-            );
+                },
+            ));
             // 3. Send store message to everybody in this space
             if let Err(e) = self.broadcast(space_address.clone(), &store_message) {
                 error!("Error during broadcast: {:?}", e);
@@ -599,10 +626,7 @@ impl Sim2h {
         let payload: Opaque = msg.clone().into();
         let send_result = self.transport.request(
             Span::fixme(),
-            RequestToChild::SendMessage {
-                uri,
-                payload,
-            },
+            RequestToChild::SendMessage { uri, payload },
             Box::new(|_me, response| match response {
                 GhostCallbackData::Response(Ok(RequestToChildResponse::SendMessageSuccess)) => {
                     Ok(())

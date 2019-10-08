@@ -1,13 +1,13 @@
-use detach::{Detach};
-use lib3h::transport::protocol::{TransportActorParentWrapperDyn};
+use detach::Detach;
+use lib3h::transport::protocol::TransportActorParentWrapperDyn;
 use lib3h::transport::websocket::actor::GhostTransportWebsocket;
 use lib3h::transport::websocket::tls::TlsConfig;
 use lib3h_protocol::Address;
-use sim2h::Sim2h;
 use log::error;
+use sim2h::Sim2h;
 use std::process::exit;
 
-fn create_websocket_transport() -> Detach<TransportActorParentWrapperDyn<Sim2h>>{
+fn create_websocket_transport() -> Detach<TransportActorParentWrapperDyn<Sim2h>> {
     Detach::new(TransportActorParentWrapperDyn::new(
         Box::new(GhostTransportWebsocket::new(
             Address::from("sim2h-worker-transport"),
@@ -17,8 +17,6 @@ fn create_websocket_transport() -> Detach<TransportActorParentWrapperDyn<Sim2h>>
         "transport_",
     ))
 }
-
-
 
 fn main() {
     env_logger::init();
