@@ -1,12 +1,15 @@
 //! represents the state of connected agents
 use crate::wire_message::WireMessage;
-use lib3h_protocol::{types::SpaceHash, Address};
+use lib3h_protocol::{data_types::SpaceData, types::SpaceHash, Address};
 pub type AgentId = Address;
+
+pub type PendingMessages = Box<Vec<WireMessage>>;
+pub type Entropy = String;
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum ConnectedAgent {
-    Limbo(Box<Vec<WireMessage>>),
-    //    RequestedJoiningSpace(SpaceHash, AgentId),
+    Limbo(PendingMessages),
+    Handshaking(SpaceData, Entropy, PendingMessages),
     JoinedSpace(SpaceHash, AgentId),
 }
 
