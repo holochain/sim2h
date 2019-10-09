@@ -14,11 +14,11 @@ pub mod wire_message;
 use crate::error::*;
 use cache::*;
 use connected_agent::*;
-pub use wire_message::WireMessage;
+pub use wire_message::{WireError, WireMessage};
 
 use detach::prelude::*;
 use holochain_tracing::Span;
-use lib3h::transport::{protocol::*};
+use lib3h::transport::protocol::*;
 use lib3h_protocol::{
     data_types::{EntryData, FetchEntryData, GetListData, Opaque, SpaceData, StoreEntryAspectData},
     protocol::*,
@@ -210,8 +210,11 @@ impl Sim2h {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
                     self.join(uri, &data)
                 } else {
-                    error!("Got message while still in LIMBO: {:?}", message);
-                    Err(format!("no agent validated at {} ", uri).into())
+                    self.send(
+                        uri.clone(),
+                        &WireMessage::Err(WireError::MessageWhileInLimbo),
+                    );
+                    Ok(())
                 }
             }
             //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
@@ -262,20 +265,16 @@ impl Sim2h {
                         error!("Error handling incomming connection: {:?}", error);
                     }
                 }
-                RequestToParent::ErrorOccured { uri, error } => {
-                    match error.kind() {
-                        lib3h::transport::error::ErrorKind::Disconnect => {
-                            debug!("Disconnecting {} after connection reset", uri);
-                            self.disconnect(&uri);
-                        }
-                        _ => {
-                            error!(
-                                "Transport error occurred on connection to {:?}: {:?}",
-                                uri, error,
-                            )
-                        }
+                RequestToParent::ErrorOccured { uri, error } => match error.kind() {
+                    lib3h::transport::error::ErrorKind::Disconnect => {
+                        debug!("Disconnecting {} after connection reset", uri);
+                        self.disconnect(&uri);
                     }
-                }
+                    _ => error!(
+                        "Transport error occurred on connection to {:?}: {:?}",
+                        uri, error,
+                    ),
+                },
             }
         }
         Ok(())
@@ -1010,15 +1009,15 @@ pub mod tests {
             Some(agent_uri.clone())
         );
 
+        let network = {
+            let mut verse = get_memory_verse();
+            verse.get_network(netname)
+        };
         {
-            let network = {
-                let mut verse = get_memory_verse();
-                verse.get_network(netname)
-            };
             let mut net = network.lock().unwrap();
             let server = net
                 .get_server(&sim2h_uri)
-                .expect("there should be a server for to_uri");
+                .expect("there should be a server for sim2h_uri");
             server.request_close(&agent_uri).expect("can disconnect");
         }
         let _result = sim2h.process();
@@ -1027,5 +1026,37 @@ pub mod tests {
             sim2h.lookup_joined(&data.space_address, &data.agent_id),
             None
         );
+
+        // connect again and send a dm message
+        {
+            let mut net = network.lock().unwrap();
+            let server = net
+                .get_server(&sim2h_uri)
+                .expect("there should be a server for sim2h_uri");
+            server.request_connect(&agent_uri).expect("can connect");
+
+            let data =
+                make_test_dm_data_with(data.agent_id.clone(), data.agent_id, "come here watson");
+            let message: Opaque = make_test_dm_message_with(data).into();
+            let result = server.post(&agent_uri, &message.to_vec());
+            assert_eq!(result, Ok(()));
+        }
+        let _result = sim2h.process();
+        let _result = sim2h.process();
+        {
+            let mut net = network.lock().unwrap();
+            let server = net
+                .get_server(&agent_uri)
+                .expect("there should be a server for agent_uri");
+            if let Ok((did_work, events)) = server.process() {
+                assert!(did_work);
+                let dm = &events[3];
+                assert_eq!(
+                    "ReceivedData(Lib3hUri(\"mem://addr_1/\"), \"{\\\"Err\\\":\\\"MessageWhileInLimbo\\\"}\")",
+                    format!("{:?}",dm))
+            } else {
+                assert!(false)
+            }
+        }
     }
 }

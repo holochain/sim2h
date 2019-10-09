@@ -3,7 +3,11 @@ use lib3h_protocol::data_types::Opaque;
 use lib3h_protocol::protocol::*;
 use std::convert::TryFrom;
 
-pub type Sim2hWireError = String;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum WireError {
+    MessageWhileInLimbo,
+    Other(String),
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireMessage {
@@ -11,7 +15,7 @@ pub enum WireMessage {
     ClientToLib3hResponse(ClientToLib3hResponse),
     Lib3hToClient(Lib3hToClient),
     Lib3hToClientResponse(Lib3hToClientResponse),
-    Err(Sim2hWireError),
+    Err(WireError),
     SignatureChallenge(String),
     SignatureChallengeResponse(String),
 }
@@ -107,7 +111,7 @@ impl From<WireMessage> for Opaque {
 }
 
 impl TryFrom<Opaque> for WireMessage {
-    type Error = Sim2hWireError;
+    type Error = WireError;
     fn try_from(message: Opaque) -> Result<Self, Self::Error> {
         Ok(serde_json::from_str(&String::from_utf8_lossy(&message))
             .map_err(|e| format!("{:?}", e))?)
@@ -115,10 +119,22 @@ impl TryFrom<Opaque> for WireMessage {
 }
 
 impl TryFrom<&Opaque> for WireMessage {
-    type Error = Sim2hWireError;
+    type Error = WireError;
     fn try_from(message: &Opaque) -> Result<Self, Self::Error> {
         Ok(serde_json::from_str(&String::from_utf8_lossy(message))
             .map_err(|e| format!("{:?}", e))?)
+    }
+}
+
+impl From<&str> for WireError {
+    fn from(err: &str) -> Self {
+        WireError::Other(format!("{:?}", err))
+    }
+}
+
+impl From<String> for WireError {
+    fn from(err: String) -> Self {
+        WireError::Other(err)
     }
 }
 
