@@ -107,7 +107,7 @@ impl Sim2h {
 
     // adds an agent to a space
     fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
-        if let Some(ConnectedAgent::Limbo) = self.get_connection(uri) {
+        if let Some(ConnectedAgent::Limbo(pending_messages)) = self.get_connection(uri) {
             let _ = self.connection_states.write().insert(
                 uri.clone(),
                 ConnectedAgent::JoinedSpace(data.space_address.clone(), data.agent_id.clone()),
@@ -139,6 +139,14 @@ impl Sim2h {
                 data.space_address.clone(),
                 data.agent_id.clone(),
             );
+            for message in *pending_messages {
+                if let Err(err) = self.handle_message(uri, message.clone()) {
+                    error!(
+                        "Error while handling limbo pending message {:?} for {}: {}",
+                        message, uri, err
+                    );
+                }
+            }
             Ok(())
         } else {
             Err(format!("no agent found in limbo at {} ", uri).into())
@@ -202,16 +210,20 @@ impl Sim2h {
 
     // handler for messages sent to sim2h
     fn handle_message(&mut self, uri: &Lib3hUri, message: WireMessage) -> Sim2hResult<()> {
-        let agent = self
+        let mut agent = self
             .get_connection(uri)
             .ok_or_else(|| format!("no connection for {}", uri))?;
         match agent {
             // if the agent sending the message is in limbo, then the only message
             // allowed is a join message.
-            ConnectedAgent::Limbo => {
+            ConnectedAgent::Limbo(ref mut pending_messages) => {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
                     self.join(uri, &data)
                 } else {
+                    // TODO: maybe have some upper limit on the number of messages
+                    // we allow to queue before dropping the connections
+                    pending_messages.push(message);
+                    let _ = self.connection_states.write().insert(uri.clone(), agent);
                     self.send(
                         uri.clone(),
                         &WireMessage::Err(WireError::MessageWhileInLimbo),
@@ -724,7 +736,7 @@ pub mod tests {
         assert_eq!(result, Ok(true));
 
         let result = sim2h.get_connection(&uri).clone();
-        assert_eq!("Some(Limbo)", format!("{:?}", result));
+        assert_eq!("Some(Limbo([]))", format!("{:?}", result));
 
         // pretend the agent has joined the space
         let _ = sim2h.connection_states.write().insert(
@@ -735,7 +747,7 @@ pub mod tests {
         let result = sim2h.handle_incoming_connect(uri.clone());
         assert_eq!(result, Ok(true));
         let result = sim2h.get_connection(&uri).clone();
-        assert_eq!("Some(Limbo)", format!("{:?}", result));
+        assert_eq!("Some(Limbo([]))", format!("{:?}", result));
     }
 
     #[test]
@@ -882,12 +894,13 @@ pub mod tests {
         let result = sim2h.handle_message(&uri, make_test_err_message());
         assert_eq!(result, Err(format!("no connection for {}", &uri).into()));
 
-        // a non-join message from an unvalidated but connected agent should return an error
+        // a non-join message from an unvalidated but connected agent should queue the message
         let _result = sim2h.handle_incoming_connect(uri.clone());
         let result = sim2h.handle_message(&uri, make_test_err_message());
+        assert_eq!(result, Ok(()));
         assert_eq!(
-            result,
-            Err(format!("no agent validated at {} ", &uri).into())
+            "Some(Limbo([Err(Other(\"\\\"fake_error\\\"\"))]))",
+            format!("{:?}", sim2h.get_connection(&uri))
         );
 
         // a valid join message from a connected agent should update its connection status
