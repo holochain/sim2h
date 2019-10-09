@@ -530,13 +530,17 @@ impl Sim2h {
                 },
             ));
             // 3. Send store message to everybody in this space
-            if let Err(e) = self.broadcast(space_address.clone(), &store_message) {
+            if let Err(e) = self.broadcast(
+                space_address.clone(),
+                &store_message,
+                    Some(&provider),
+            ) {
                 error!("Error during broadcast: {:?}", e);
             }
         }
     }
 
-    fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage) -> Sim2hResult<()> {
+    fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage, except: Option<&AgentId>) -> Sim2hResult<()> {
         debug!("Broadcast in space: {:?}", space);
         let all_uris = self
             .spaces
@@ -544,6 +548,16 @@ impl Sim2h {
             .ok_or("No such space")?
             .read()
             .all_agents()
+            .clone()
+            .into_iter()
+            .filter(|(a,_)| {
+                if let Some(exception) = except {
+                    *a != *exception
+                } else {
+                    true
+                }
+            })
+            .collect::<HashMap<AgentId, Lib3hUri>>()
             .values()
             .cloned()
             .collect::<Vec<_>>();
