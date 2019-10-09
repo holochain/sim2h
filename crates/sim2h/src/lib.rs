@@ -906,6 +906,33 @@ pub mod tests {
         }
     }
 
+    // creates an agent uri and sends a join request for it to sim2h
+    fn test_setup_agent(
+        netname: &str,
+        sim2h_uri: &Lib3hUri,
+        agent_name: &str,
+    ) -> (Lib3hUri, SpaceData) {
+        let network = {
+            let mut verse = get_memory_verse();
+            verse.get_network(netname)
+        };
+        let agent_uri = network.lock().unwrap().bind();
+
+        // connect to sim2h with join messages
+        let space_data = make_test_space_data_with_agent(agent_name.into());
+        let join: Opaque = make_test_join_message_with_space_data(space_data.clone()).into();
+        {
+            let mut net = network.lock().unwrap();
+            let server = net
+                .get_server(sim2h_uri)
+                .expect("there should be a server for to_uri");
+            server.request_connect(&agent_uri).expect("can connect");
+            let result = server.post(&agent_uri, &join.to_vec());
+            assert_eq!(result, Ok(()));
+        }
+        (agent_uri, space_data)
+    }
+
     #[test]
     pub fn test_end_to_end() {
         enable_logging_for_test(true);
@@ -915,30 +942,9 @@ pub mod tests {
         let sim2h_uri = sim2h.bound_uri.clone().expect("should have bound");
 
         // set up two other agents on the memory-network
-        let network = {
-            let mut verse = get_memory_verse();
-            verse.get_network(netname)
-        };
-        let agent1_uri = network.lock().unwrap().bind();
-        let agent2_uri = network.lock().unwrap().bind();
+        let (agent1_uri, space_data1) = test_setup_agent(netname, &sim2h_uri, "agent1");
+        let (agent2_uri, space_data2) = test_setup_agent(netname, &sim2h_uri, "agent2");
 
-        // connect them to sim2h with join messages
-        let space_data1 = make_test_space_data_with_agent("agent1".into());
-        let space_data2 = make_test_space_data_with_agent("agent2".into());
-        let join1: Opaque = make_test_join_message_with_space_data(space_data1.clone()).into();
-        let join2: Opaque = make_test_join_message_with_space_data(space_data2.clone()).into();
-        {
-            let mut net = network.lock().unwrap();
-            let server = net
-                .get_server(&sim2h_uri)
-                .expect("there should be a server for to_uri");
-            server.request_connect(&agent1_uri).expect("can connect");
-            let result = server.post(&agent1_uri, &join1.to_vec());
-            assert_eq!(result, Ok(()));
-            server.request_connect(&agent2_uri).expect("can connect");
-            let result = server.post(&agent2_uri, &join2.to_vec());
-            assert_eq!(result, Ok(()));
-        }
         let _result = sim2h.process();
         assert_eq!(
             sim2h.lookup_joined(&space_data1.space_address, &space_data1.agent_id),
@@ -955,6 +961,11 @@ pub mod tests {
             space_data2.agent_id,
             "come here watson",
         );
+
+        let network = {
+            let mut verse = get_memory_verse();
+            verse.get_network(netname)
+        };
         let message: Opaque = make_test_dm_message_with(data).into();
         {
             let mut net = network.lock().unwrap();
@@ -982,4 +993,23 @@ pub mod tests {
             }
         }
     }
+    /*
+    #[test]
+    pub fn test_reconnect() {
+        enable_logging_for_test(true);
+        let netname = "test_reconnect";
+        let mut sim2h = make_test_sim2h_memnet(netname);
+        let _result = sim2h.process();
+        let sim2h_uri = sim2h.bound_uri.clone().expect("should have bound");
+        // set up two other agents on the memory-network
+        let network = {
+            let mut verse = get_memory_verse();
+            verse.get_network(netname)
+        };
+        let agent1_uri = network.lock().unwrap().bind();
+
+        // connect them to sim2h with join messages
+        let space_data1 = make_test_space_data_with_agent("agent1".into());
+        let join1: Opaque = make_test_join_message_with_space_data(space_data1.clone()).into();
+    }*/
 }
