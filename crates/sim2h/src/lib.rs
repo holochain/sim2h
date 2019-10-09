@@ -30,11 +30,8 @@ use lib3h_zombie_actor::prelude::*;
 
 use log::*;
 use parking_lot::RwLock;
-use std::{
-    collections::HashMap,
-    convert::TryFrom,
-};
 use rand::Rng;
+use std::{collections::HashMap, convert::TryFrom};
 
 pub struct Sim2h {
     pub bound_uri: Option<Lib3hUri>,
