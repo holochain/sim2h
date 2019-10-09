@@ -3,6 +3,9 @@ use lib3h_protocol::data_types::Opaque;
 use lib3h_protocol::protocol::*;
 use std::convert::TryFrom;
 
+pub type Entropy = String;
+pub type SignedEntropy = String;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireError {
     MessageWhileInLimbo,
@@ -16,8 +19,8 @@ pub enum WireMessage {
     Lib3hToClient(Lib3hToClient),
     Lib3hToClientResponse(Lib3hToClientResponse),
     Err(WireError),
-    SignatureChallenge(String),
-    SignatureChallengeResponse(String),
+    SignatureChallenge(Entropy),
+    SignatureChallengeResponse(SignedEntropy),
 }
 
 impl WireMessage {
