@@ -218,6 +218,8 @@ impl Sim2h {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
                     self.join(uri, &data)
                 } else {
+                    // TODO: maybe have some upper limit on the number of messages
+                    // we allow to queue before dropping the connections
                     pending_messages.push(message);
                     let _ = self.connection_states.write().insert(uri.clone(), agent);
                     self.send(
