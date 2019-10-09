@@ -18,7 +18,7 @@ pub use wire_message::WireMessage;
 
 use detach::prelude::*;
 use holochain_tracing::Span;
-use lib3h::transport::protocol::*;
+use lib3h::transport::{protocol::*};
 use lib3h_protocol::{
     data_types::{EntryData, FetchEntryData, GetListData, Opaque, SpaceData, StoreEntryAspectData},
     protocol::*,
@@ -263,16 +263,17 @@ impl Sim2h {
                     }
                 }
                 RequestToParent::ErrorOccured { uri, error } => {
-                    if error.to_string()
-                        == "Protocol(\"Connection reset without closing handshake\")"
-                    {
-                        debug!("Disconnecting {} after connection reset", uri);
-                        self.disconnect(&uri);
-                    } else {
-                        error!(
-                            "Transport error occured on connection to {:?}: {:?}",
-                            uri, error,
-                        )
+                    match error.kind() {
+                        lib3h::transport::error::ErrorKind::Disconnect => {
+                            debug!("Disconnecting {} after connection reset", uri);
+                            self.disconnect(&uri);
+                        }
+                        _ => {
+                            error!(
+                                "Transport error occurred on connection to {:?}: {:?}",
+                                uri, error,
+                            )
+                        }
                     }
                 }
             }
@@ -993,23 +994,38 @@ pub mod tests {
             }
         }
     }
-    /*
+
     #[test]
-    pub fn test_reconnect() {
+    pub fn test_disconnect_and_reconnect() {
         enable_logging_for_test(true);
-        let netname = "test_reconnect";
+        let netname = "test_disconnect_and_reconnect";
         let mut sim2h = make_test_sim2h_memnet(netname);
         let _result = sim2h.process();
         let sim2h_uri = sim2h.bound_uri.clone().expect("should have bound");
-        // set up two other agents on the memory-network
-        let network = {
-            let mut verse = get_memory_verse();
-            verse.get_network(netname)
-        };
-        let agent1_uri = network.lock().unwrap().bind();
+        let (agent_uri, data) = test_setup_agent(netname, &sim2h_uri, "agent");
+        let _result = sim2h.process();
 
-        // connect them to sim2h with join messages
-        let space_data1 = make_test_space_data_with_agent("agent1".into());
-        let join1: Opaque = make_test_join_message_with_space_data(space_data1.clone()).into();
-    }*/
+        assert_eq!(
+            sim2h.lookup_joined(&data.space_address, &data.agent_id),
+            Some(agent_uri.clone())
+        );
+
+        {
+            let network = {
+                let mut verse = get_memory_verse();
+                verse.get_network(netname)
+            };
+            let mut net = network.lock().unwrap();
+            let server = net
+                .get_server(&sim2h_uri)
+                .expect("there should be a server for to_uri");
+            server.request_close(&agent_uri).expect("can disconnect");
+        }
+        let _result = sim2h.process();
+
+        assert_eq!(
+            sim2h.lookup_joined(&data.space_address, &data.agent_id),
+            None
+        );
+    }
 }
