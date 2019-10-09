@@ -38,6 +38,7 @@ pub struct Sim2h {
     connection_states: RwLock<HashMap<Lib3hUri, ConnectedAgent>>,
     spaces: HashMap<SpaceHash, RwLock<Space>>,
     transport: Detach<TransportActorParentWrapperDyn<Self>>,
+    num_ticks: u32,
 }
 
 impl Sim2h {
@@ -49,6 +50,7 @@ impl Sim2h {
             connection_states: RwLock::new(HashMap::new()),
             spaces: HashMap::new(),
             transport: t,
+            num_ticks: 0,
         };
 
         debug!("Trying to bind to {}...", bind_spec);
@@ -240,6 +242,12 @@ impl Sim2h {
 
     // process transport and  incoming messages from it
     pub fn process(&mut self) -> Sim2hResult<()> {
+        self.num_ticks += 1;
+        if self.num_ticks % 2000 == 0 {
+            //std::io::stdout().flush()?;
+            debug!(".");
+            self.num_ticks = 0;
+        }
         detach_run!(&mut self.transport, |t| t.process(self)).map_err(|e| format!("{:?}", e))?;
         for mut transport_message in self.transport.drain_messages() {
             match transport_message
@@ -587,6 +595,7 @@ impl Sim2h {
         if let Err(e) = send_result {
             error!("GhostError during broadcast send: {:?}", e)
         }
+        debug!("sent.");
     }
 }
 
