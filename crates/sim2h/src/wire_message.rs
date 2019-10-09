@@ -148,7 +148,7 @@ pub mod tests {
 
         let opaque_msg: Opaque = msg.clone().into();
         assert_eq!(
-            "\"{\\\"Err\\\":\\\"fake_error\\\"}\"",
+            "\"{\\\"Err\\\":{\\\"Other\\\":\\\"\\\\\\\"fake_error\\\\\\\"\\\"}}\"",
             format!("{}", opaque_msg)
         );
         let roundtrip_msg = WireMessage::try_from(opaque_msg).expect("deserialize should work");
