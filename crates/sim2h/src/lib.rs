@@ -213,6 +213,10 @@ impl Sim2h {
         let mut agent = self
             .get_connection(uri)
             .ok_or_else(|| format!("no connection for {}", uri))?;
+        // TODO: anyway, but especially with this Ping/Pong, mitigate DoS attacks.
+        if message == WireMessage::Ping {
+            self.send(uri.clone(), &WireMessage::Pong);
+        }
         match agent {
             // if the agent sending the message is in limbo, then the only message
             // allowed is a join message.

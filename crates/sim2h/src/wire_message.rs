@@ -16,11 +16,15 @@ pub enum WireMessage {
     Lib3hToClient(Lib3hToClient),
     Lib3hToClientResponse(Lib3hToClientResponse),
     Err(WireError),
+    Ping,
+    Pong,
 }
 
 impl WireMessage {
     pub fn message_type(&self) -> String {
         String::from(match self {
+            WireMessage::Ping => "Ping",
+            WireMessage::Pong => "Pong",
             WireMessage::ClientToLib3h(ClientToLib3h::Bootstrap(_)) => "[C>L]Bootstrap",
             WireMessage::ClientToLib3h(ClientToLib3h::FetchEntry(_)) => "[C>L]FetchEntry",
             WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => "[C>L]JoinSpace",
