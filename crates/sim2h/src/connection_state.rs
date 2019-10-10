@@ -6,8 +6,7 @@ pub type AgentId = Address;
 #[derive(PartialEq, Debug, Clone)]
 pub enum ConnectionState {
     Limbo(Box<Vec<WireMessage>>),
-    //    RequestedJoiningSpace(SpaceHash, AgentId),
-    JoinedSpace(SpaceHash, AgentId),
+    Joined(SpaceHash, AgentId),
 }
 
 impl ConnectionState {

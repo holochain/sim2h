@@ -110,7 +110,7 @@ impl Sim2h {
         if let Some(ConnectionState::Limbo(pending_messages)) = self.get_connection(uri) {
             let _ = self.connection_states.write().insert(
                 uri.clone(),
-                ConnectionState::JoinedSpace(data.space_address.clone(), data.agent_id.clone()),
+                ConnectionState::Joined(data.space_address.clone(), data.agent_id.clone()),
             );
             if !self.spaces.contains_key(&data.space_address) {
                 self.spaces
@@ -155,7 +155,7 @@ impl Sim2h {
 
     // removes an agent from a space
     fn leave(&self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
-        if let Some(ConnectionState::JoinedSpace(space_address, agent_id)) = self.get_connection(uri)
+        if let Some(ConnectionState::Joined(space_address, agent_id)) = self.get_connection(uri)
         {
             if (data.agent_id != agent_id) || (data.space_address != space_address) {
                 Err(SPACE_MISMATCH_ERR_STR.into())
@@ -170,7 +170,7 @@ impl Sim2h {
 
     // removes a uri from connection and from spaces
     fn disconnect(&self, uri: &Lib3hUri) {
-        if let Some(ConnectionState::JoinedSpace(space_address, agent_id)) =
+        if let Some(ConnectionState::Joined(space_address, agent_id)) =
             self.connection_states.write().remove(uri)
         {
             self.spaces
@@ -231,11 +231,10 @@ impl Sim2h {
                     Ok(())
                 }
             }
-            //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
 
             // if the agent sending the messages has been vetted and is in the space
             // then build a message to be proxied to the correct destination, and forward it
-            ConnectionState::JoinedSpace(space_address, agent_id) => {
+            ConnectionState::Joined(space_address, agent_id) => {
                 if let Some((is_request, to_uri, message)) =
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
                 {
@@ -741,7 +740,7 @@ pub mod tests {
         // pretend the agent has joined the space
         let _ = sim2h.connection_states.write().insert(
             uri.clone(),
-            ConnectionState::JoinedSpace("fake_agent".into(), "fake_space".into()),
+            ConnectionState::Joined("fake_agent".into(), "fake_space".into()),
         );
         // if we get a second incoming connection, the state should be reset.
         let result = sim2h.handle_incoming_connect(uri.clone());
@@ -773,7 +772,7 @@ pub mod tests {
         );
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
-            "Some(JoinedSpace(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
+            "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
             format!("{:?}", result)
         );
     }
@@ -908,7 +907,7 @@ pub mod tests {
         assert_eq!(result, Ok(()));
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
-            "Some(JoinedSpace(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
+            "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
             format!("{:?}", result)
         );
 
