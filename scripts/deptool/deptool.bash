@@ -36,7 +36,7 @@ function _lib3h_path_deps() {
   local __deps=$(find ../.. -maxdepth 2 -mindepth 2 -name Cargo.toml)
   echo "${__deps}"
   sed -i'' "s/\\(lib3h[[:space:]]\\+=[[:space:]]\\+\\).*/\\1${__l3h_lib3h//\//\\\/}/" ${__deps}
-  sed -i'' "s/\\(lib3h_protocol[[:space:]]\\+=[[:space:]]\\+\\).*/\\1${__l3h_protocol//\//\\\/}/" ${__deps}
+  sed -i'' "s/\\(lib3h_protocol[[:space:]]\\+=[[:space:]]\\+\\).*/\\1${__l3h_proto//\//\\\/}/" ${__deps}
   sed -i'' "s/\\(lib3h_crypto_api[[:space:]]\\+=[[:space:]]\\+\\).*/\\1${__l3h_crypto//\//\\\/}/" ${__deps}
   sed -i'' "s/\\(lib3h_sodium[[:space:]]\\+=[[:space:]]\\+\\).*/\\1${__l3h_sodium//\//\\\/}/" ${__deps}
   sed -i'' "s/\\(lib3h_zombie_actor[[:space:]]\\+=[[:space:]]\\+\\).*/\\1${__l3h_zombie_actor//\//\\\/}/" ${__deps}
