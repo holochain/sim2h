@@ -220,7 +220,6 @@ impl Sim2h {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
                     self.join(uri, &data)
                 } else {
-
                     // TODO: maybe have some upper limit on the number of messages
                     // we allow to queue before dropping the connections
                     pending_messages.push(message);
@@ -232,19 +231,7 @@ impl Sim2h {
                     Ok(())
                 }
             }
-            ConnectionState::Handshaking(space,agent,entropy,pending_messages) => {
-                if let WireMessage::SignatureChallengeResponse(signed_entropy) = message {
-                    if validate_signature(agent, entropy, signed_entropy) {
-                        self.join(uri, &data)
-                    } else {
-                        self.disconnect(uri);
-                    }
-                } else {
-                    // any other messages we just add to pending
-                    pending_messages.push(message);
-                    let _ = self.connection_states.write().insert(uri.clone(), agent);
-                }
-            }
+            //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
 
             // if the agent sending the messages has been vetted and is in the space
             // then build a message to be proxied to the correct destination, and forward it
