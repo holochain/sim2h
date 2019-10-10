@@ -1,3 +1,5 @@
+extern crate structopt;
+
 use lib3h::transport::{
     protocol::DynTransportActor,
     websocket::{actor::GhostTransportWebsocket, tls::TlsConfig},
@@ -6,6 +8,18 @@ use lib3h_protocol::{uri::Builder, Address};
 use log::error;
 use sim2h::Sim2h;
 use std::process::exit;
+use structopt::StructOpt;
+
+#[derive(StructOpt)]
+struct Cli {
+    #[structopt(
+        long,
+        short,
+        help = "The port to run the websocket server at",
+        default_value = "9000"
+    )]
+    port: u16,
+}
 
 fn create_websocket_transport() -> DynTransportActor {
     Box::new(GhostTransportWebsocket::new(
@@ -19,11 +33,12 @@ fn main() {
     env_logger::init();
     let transport = create_websocket_transport();
 
+    let args = Cli::from_args();
+
     let host = "wss://127.0.0.1/";
-    let port = 9000;
     let uri = Builder::with_raw_url(host)
         .unwrap_or_else(|e| panic!("with_raw_url: {:?}", e))
-        .with_port(port)
+        .with_port(args.port)
         .build();
     let mut sim2h = Sim2h::new(transport, uri);
 
