@@ -9,6 +9,7 @@ use log::error;
 use sim2h::Sim2h;
 use std::process::exit;
 use structopt::StructOpt;
+use lib3h::transport::websocket::tls::TlsCertificate;
 
 #[derive(StructOpt)]
 struct Cli {
@@ -24,7 +25,7 @@ struct Cli {
 fn create_websocket_transport() -> DynTransportActor {
     Box::new(GhostTransportWebsocket::new(
         Address::from("sim2h-worker-transport"),
-        TlsConfig::Unencrypted,
+        TlsConfig::SuppliedCertificate(TlsCertificate::build_from_entropy()),
         Address::from("sim2h-network"),
     ))
 }
