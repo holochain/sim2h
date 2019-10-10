@@ -16,8 +16,6 @@ pub enum WireMessage {
     Lib3hToClient(Lib3hToClient),
     Lib3hToClientResponse(Lib3hToClientResponse),
     Err(WireError),
-    SignatureChallenge(String),
-    SignatureChallengeResponse(String),
 }
 
 impl WireMessage {
@@ -95,8 +93,6 @@ impl WireMessage {
             WireMessage::Lib3hToClientResponse(
                 Lib3hToClientResponse::HandleStoreEntryAspectResult,
             ) => "[L<C]HandleStoreEntryAspectResult",
-            WireMessage::SignatureChallenge(_) => "[Signature Challenge]",
-            WireMessage::SignatureChallengeResponse(_) => "[Signature Challenge Response]",
             WireMessage::Err(_) => "[Error] {:?}",
         })
     }
