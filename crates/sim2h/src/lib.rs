@@ -7,13 +7,13 @@ extern crate detach;
 extern crate serde;
 
 pub mod cache;
-pub mod connected_agent;
+pub mod connection_state;
 pub mod error;
 pub mod wire_message;
 
 use crate::error::*;
 use cache::*;
-use connected_agent::*;
+use connection_state::*;
 pub use wire_message::{WireError, WireMessage};
 
 use detach::prelude::*;
@@ -35,7 +35,7 @@ use std::{collections::HashMap, convert::TryFrom};
 
 pub struct Sim2h {
     pub bound_uri: Option<Lib3hUri>,
-    connection_states: RwLock<HashMap<Lib3hUri, ConnectedAgent>>,
+    connection_states: RwLock<HashMap<Lib3hUri, ConnectionState>>,
     spaces: HashMap<SpaceHash, RwLock<Space>>,
     transport: Detach<TransportActorParentWrapperDyn<Self>>,
     num_ticks: u32,
@@ -107,10 +107,10 @@ impl Sim2h {
 
     // adds an agent to a space
     fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
-        if let Some(ConnectedAgent::Limbo(pending_messages)) = self.get_connection(uri) {
+        if let Some(ConnectionState::Limbo(pending_messages)) = self.get_connection(uri) {
             let _ = self.connection_states.write().insert(
                 uri.clone(),
-                ConnectedAgent::JoinedSpace(data.space_address.clone(), data.agent_id.clone()),
+                ConnectionState::JoinedSpace(data.space_address.clone(), data.agent_id.clone()),
             );
             if !self.spaces.contains_key(&data.space_address) {
                 self.spaces
@@ -155,7 +155,7 @@ impl Sim2h {
 
     // removes an agent from a space
     fn leave(&self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
-        if let Some(ConnectedAgent::JoinedSpace(space_address, agent_id)) = self.get_connection(uri)
+        if let Some(ConnectionState::JoinedSpace(space_address, agent_id)) = self.get_connection(uri)
         {
             if (data.agent_id != agent_id) || (data.space_address != space_address) {
                 Err(SPACE_MISMATCH_ERR_STR.into())
@@ -170,7 +170,7 @@ impl Sim2h {
 
     // removes a uri from connection and from spaces
     fn disconnect(&self, uri: &Lib3hUri) {
-        if let Some(ConnectedAgent::JoinedSpace(space_address, agent_id)) =
+        if let Some(ConnectionState::JoinedSpace(space_address, agent_id)) =
             self.connection_states.write().remove(uri)
         {
             self.spaces
@@ -182,7 +182,7 @@ impl Sim2h {
     }
 
     // get the connection status of an agent
-    fn get_connection(&self, uri: &Lib3hUri) -> Option<ConnectedAgent> {
+    fn get_connection(&self, uri: &Lib3hUri) -> Option<ConnectionState> {
         let reader = self.connection_states.read();
         reader.get(uri).map(|ca| (*ca).clone())
     }
@@ -201,7 +201,7 @@ impl Sim2h {
         if let Some(_old) = self
             .connection_states
             .write()
-            .insert(uri.clone(), ConnectedAgent::new())
+            .insert(uri.clone(), ConnectionState::new())
         {
             println!("TODO should remove {}", uri); //TODO
         };
@@ -216,7 +216,7 @@ impl Sim2h {
         match agent {
             // if the agent sending the message is in limbo, then the only message
             // allowed is a join message.
-            ConnectedAgent::Limbo(ref mut pending_messages) => {
+            ConnectionState::Limbo(ref mut pending_messages) => {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
                     self.join(uri, &data)
                 } else {
@@ -235,7 +235,7 @@ impl Sim2h {
 
             // if the agent sending the messages has been vetted and is in the space
             // then build a message to be proxied to the correct destination, and forward it
-            ConnectedAgent::JoinedSpace(space_address, agent_id) => {
+            ConnectionState::JoinedSpace(space_address, agent_id) => {
                 if let Some((is_request, to_uri, message)) =
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
                 {
@@ -741,7 +741,7 @@ pub mod tests {
         // pretend the agent has joined the space
         let _ = sim2h.connection_states.write().insert(
             uri.clone(),
-            ConnectedAgent::JoinedSpace("fake_agent".into(), "fake_space".into()),
+            ConnectionState::JoinedSpace("fake_agent".into(), "fake_space".into()),
         );
         // if we get a second incoming connection, the state should be reset.
         let result = sim2h.handle_incoming_connect(uri.clone());
