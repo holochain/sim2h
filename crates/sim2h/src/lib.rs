@@ -327,7 +327,7 @@ impl Sim2h {
     ) -> Sim2hResult<Option<(bool, Lib3hUri, WireMessage)>> {
         trace!("prepare_proxy entered");
         debug!(
-            ">>IN>> {} from {}",
+            "<<IN<< {} from {}",
             message.message_type(),
             agent_id.to_string()
         );
