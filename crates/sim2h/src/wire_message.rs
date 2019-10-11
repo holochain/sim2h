@@ -1,4 +1,5 @@
 //! encapsulates lib3h ghostmessage for sim2h including security challenge
+use crate::error::Sim2hError;
 use lib3h_protocol::data_types::Opaque;
 use lib3h_protocol::protocol::*;
 use std::convert::TryFrom;
@@ -110,6 +111,13 @@ impl From<WireMessage> for Opaque {
     }
 }
 
+impl From<WireMessage> for String {
+    fn from(message: WireMessage) -> String {
+        serde_json::to_string(&message)
+            .expect("wiremessage should serialize")
+    }
+}
+
 impl TryFrom<Opaque> for WireMessage {
     type Error = WireError;
     fn try_from(message: Opaque) -> Result<Self, Self::Error> {
@@ -135,6 +143,12 @@ impl From<&str> for WireError {
 impl From<String> for WireError {
     fn from(err: String) -> Self {
         WireError::Other(err)
+    }
+}
+
+impl From<WireError> for Sim2hError {
+    fn from(err: WireError) -> Sim2hError {
+        format!("{:?}", err).into()
     }
 }
 
