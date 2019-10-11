@@ -107,7 +107,8 @@ impl Sim2h {
 
     // adds an agent to a space
     fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
-        if let Some(ConnectionState::Limbo(pending_messages)) = self.get_connection(uri) {
+        trace!("join entered");
+        let result = if let Some(ConnectionState::Limbo(pending_messages)) = self.get_connection(uri) {
             let _ = self.connection_states.write().insert(
                 uri.clone(),
                 ConnectionState::Joined(data.space_address.clone(), data.agent_id.clone()),
@@ -150,7 +151,9 @@ impl Sim2h {
             Ok(())
         } else {
             Err(format!("no agent found in limbo at {} ", uri).into())
-        }
+        };
+        trace!("join done");
+        result
     }
 
     // removes an agent from a space
@@ -170,6 +173,7 @@ impl Sim2h {
 
     // removes a uri from connection and from spaces
     fn disconnect(&self, uri: &Lib3hUri) {
+        trace!("disconnect entered");
         if let Some(ConnectionState::Joined(space_address, agent_id)) =
             self.connection_states.write().remove(uri)
         {
@@ -179,6 +183,7 @@ impl Sim2h {
                 .write()
                 .remove_agent(&agent_id);
         }
+        trace!("disconnect done");
     }
 
     // get the connection status of an agent
@@ -197,6 +202,7 @@ impl Sim2h {
 
     // handler for incoming connections
     fn handle_incoming_connect(&self, uri: Lib3hUri) -> Sim2hResult<bool> {
+        trace!("handle_incoming_connect entered");
         info!("New connection from {:?}", uri);
         if let Some(_old) = self
             .connection_states
@@ -205,11 +211,13 @@ impl Sim2h {
         {
             println!("TODO should remove {}", uri); //TODO
         };
+        trace!("handle_incoming_connect done");
         Ok(true)
     }
 
     // handler for messages sent to sim2h
     fn handle_message(&mut self, uri: &Lib3hUri, message: WireMessage) -> Sim2hResult<()> {
+        trace!("handle_message entered");
         let mut agent = self
             .get_connection(uri)
             .ok_or_else(|| format!("no connection for {}", uri))?;
@@ -217,7 +225,7 @@ impl Sim2h {
         if message == WireMessage::Ping {
             self.send(uri.clone(), &WireMessage::Pong);
         }
-        match agent {
+        let result = match agent {
             // if the agent sending the message is in limbo, then the only message
             // allowed is a join message.
             ConnectionState::Limbo(ref mut pending_messages) => {
@@ -252,18 +260,23 @@ impl Sim2h {
                     Ok(())
                 }
             }
-        }
+        };
+        trace!("handle_message done");
+        result
     }
 
     // process transport and  incoming messages from it
     pub fn process(&mut self) -> Sim2hResult<()> {
+        trace!("process");
         self.num_ticks += 1;
         if self.num_ticks % 2000 == 0 {
             //std::io::stdout().flush()?;
             debug!(".");
             self.num_ticks = 0;
         }
+        trace!("process transport");
         detach_run!(&mut self.transport, |t| t.process(self)).map_err(|e| format!("{:?}", e))?;
+        trace!("process transport done");
         for mut transport_message in self.transport.drain_messages() {
             match transport_message
                 .take_message()
@@ -300,6 +313,7 @@ impl Sim2h {
                 },
             }
         }
+        trace!("process done");
         Ok(())
     }
 
@@ -311,12 +325,13 @@ impl Sim2h {
         agent_id: &AgentId,
         message: WireMessage,
     ) -> Sim2hResult<Option<(bool, Lib3hUri, WireMessage)>> {
+        trace!("prepare_proxy entered");
         debug!(
             ">>IN>> {} from {}",
             message.message_type(),
             agent_id.to_string()
         );
-        match message {
+        let result = match message {
             // First make sure we are not receiving a message in the wrong direction.
             // Panic for now so we can easily spot a mistake.
             // Should maybe break up WireMessage into two different structs so we get the
@@ -503,7 +518,9 @@ impl Sim2h {
                 warn!("Ignoring unimplemented message: {:?}", message );
                 Err(format!("Message not implemented: {:?}", message).into())
             }
-        }
+        };
+        trace!("prepare_proxy done");
+        result
     }
 
     fn handle_new_entry_data(
