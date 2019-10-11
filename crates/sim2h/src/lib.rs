@@ -143,7 +143,7 @@ impl Sim2h {
                 data.agent_id.clone(),
             );
             for message in *pending_messages {
-                if let Err(err) = self.handle_message(uri, message.clone()) {
+                if let Err(err) = self.handle_message(uri, message.clone(), &data.agent_id) {
                     error!(
                         "Error while handling limbo pending message {:?} for {}: {}",
                         message, uri, err
@@ -211,7 +211,12 @@ impl Sim2h {
     }
 
     // handler for messages sent to sim2h
-    fn handle_message(&mut self, uri: &Lib3hUri, message: WireMessage) -> Sim2hResult<()> {
+    fn handle_message(
+        &mut self,
+        uri: &Lib3hUri,
+        message: WireMessage,
+        signer: &AgentId,
+    ) -> Sim2hResult<()> {
         let mut agent = self
             .get_connection(uri)
             .ok_or_else(|| format!("no connection for {}", uri))?;
@@ -224,6 +229,9 @@ impl Sim2h {
             // allowed is a join message.
             ConnectionState::Limbo(ref mut pending_messages) => {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
+                    if &data.agent_id != signer {
+                        return Err(SIGNER_MISMATCH_ERR_STR.into());
+                    }
                     self.join(uri, &data)
                 } else {
                     // TODO: maybe have some upper limit on the number of messages
@@ -241,6 +249,9 @@ impl Sim2h {
             // if the agent sending the messages has been vetted and is in the space
             // then build a message to be proxied to the correct destination, and forward it
             ConnectionState::Joined(space_address, agent_id) => {
+                if &agent_id != signer {
+                    return Err(SIGNER_MISMATCH_ERR_STR.into());
+                }
                 if let Some((is_request, to_uri, message)) =
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
                 {
@@ -286,8 +297,8 @@ impl Sim2h {
             {
                 RequestToParent::ReceivedData { uri, payload } => {
                     match Sim2h::verify_payload(payload.clone()) {
-                        Ok((_source, wire_message)) => {
-                            if let Err(error) = self.handle_message(&uri, wire_message) {
+                        Ok((source, wire_message)) => {
+                            if let Err(error) = self.handle_message(&uri, wire_message, &source) {
                                 error!("Error handling message: {:?}", error);
                             }
                         }
@@ -659,7 +670,11 @@ pub mod tests {
     const TEST_AGENT_NAME: &str = "fake_agent_id";
 
     fn make_test_agent() -> (SpaceData, SecBuf) {
-        make_test_space_data_with_agent(TEST_AGENT_NAME)
+        make_test_agent_with_name(TEST_AGENT_NAME)
+    }
+
+    fn make_test_agent_with_name(name: &str) -> (SpaceData, SecBuf) {
+        make_test_space_data_with_agent(name)
     }
 
     fn make_test_space_data() -> SpaceData {
@@ -940,22 +955,29 @@ pub mod tests {
         };
         let uri = network.lock().unwrap().bind();
         let (space_data, _key) = make_test_agent();
+        let test_agent = space_data.agent_id.clone();
 
         // a message from an unconnected agent should return an error
-        let result = sim2h.handle_message(&uri, make_test_err_message());
+        let result = sim2h.handle_message(&uri, make_test_err_message(), &test_agent);
         assert_eq!(result, Err(format!("no connection for {}", &uri).into()));
 
         // a non-join message from an unvalidated but connected agent should queue the message
         let _result = sim2h.handle_incoming_connect(uri.clone());
-        let result = sim2h.handle_message(&uri, make_test_err_message());
+        let result = sim2h.handle_message(&uri, make_test_err_message(), &test_agent);
         assert_eq!(result, Ok(()));
         assert_eq!(
             "Some(Limbo([Err(Other(\"\\\"fake_error\\\"\"))]))",
             format!("{:?}", sim2h.get_connection(&uri))
         );
 
+        // a valid join message signed by the wrong agent should return an signer mismatch error
+        let (other_agent_space, _) = make_test_agent_with_name("other_agent");
+        let result =
+            sim2h.handle_message(&uri, make_test_join_message(), &other_agent_space.agent_id);
+        assert_eq!(result, Err(SIGNER_MISMATCH_ERR_STR.into()));
+
         // a valid join message from a connected agent should update its connection status
-        let result = sim2h.handle_message(&uri, make_test_join_message());
+        let result = sim2h.handle_message(&uri, make_test_join_message(), &test_agent);
         assert_eq!(result, Ok(()));
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
@@ -975,7 +997,10 @@ pub mod tests {
 
         // then we can make a message and handle it.
         let message = make_test_dm_message();
-        let result = sim2h.handle_message(&uri, message);
+        let result = sim2h.handle_message(&uri, message.clone(), &other_agent_space.agent_id);
+        assert_eq!(result, Err(SIGNER_MISMATCH_ERR_STR.into()));
+
+        let result = sim2h.handle_message(&uri, message, &test_agent);
         assert_eq!(result, Ok(()));
 
         // which should result in showing up in the to_uri's inbox in the in-memory netowrk
