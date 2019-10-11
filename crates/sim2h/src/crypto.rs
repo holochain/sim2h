@@ -8,8 +8,8 @@ use hcid::*;
 use holochain_core_types::{
     agent::Base32,
     error::{HcResult, HolochainError},
-    signature::Provenance,
 };
+pub use holochain_core_types::signature::Provenance;
 use holochain_persistence_api::cas::content::Address;
 use lib3h_protocol::data_types::Opaque;
 use lib3h_sodium::{secbuf::SecBuf, sign};
