@@ -5,13 +5,16 @@ extern crate log;
 extern crate detach;
 #[macro_use]
 extern crate serde;
+#[macro_use]
+extern crate lazy_static;
 
 pub mod cache;
 pub mod connection_state;
+pub mod crypto;
 pub mod error;
 pub mod wire_message;
 
-use crate::error::*;
+use crate::{crypto::*, error::*};
 use cache::*;
 use connection_state::*;
 pub use wire_message::{WireError, WireMessage};
@@ -141,7 +144,7 @@ impl Sim2h {
                 data.agent_id.clone(),
             );
             for message in *pending_messages {
-                if let Err(err) = self.handle_message(uri, message.clone()) {
+                if let Err(err) = self.handle_message(uri, message.clone(), &data.agent_id) {
                     error!(
                         "Error while handling limbo pending message {:?} for {}: {}",
                         message, uri, err
@@ -158,8 +161,7 @@ impl Sim2h {
 
     // removes an agent from a space
     fn leave(&self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
-        if let Some(ConnectionState::Joined(space_address, agent_id)) = self.get_connection(uri)
-        {
+        if let Some(ConnectionState::Joined(space_address, agent_id)) = self.get_connection(uri) {
             if (data.agent_id != agent_id) || (data.space_address != space_address) {
                 Err(SPACE_MISMATCH_ERR_STR.into())
             } else {
@@ -216,7 +218,12 @@ impl Sim2h {
     }
 
     // handler for messages sent to sim2h
-    fn handle_message(&mut self, uri: &Lib3hUri, message: WireMessage) -> Sim2hResult<()> {
+    fn handle_message(
+        &mut self,
+        uri: &Lib3hUri,
+        message: WireMessage,
+        signer: &AgentId,
+    ) -> Sim2hResult<()> {
         trace!("handle_message entered");
         let mut agent = self
             .get_connection(uri)
@@ -230,6 +237,9 @@ impl Sim2h {
             // allowed is a join message.
             ConnectionState::Limbo(ref mut pending_messages) => {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
+                    if &data.agent_id != signer {
+                        return Err(SIGNER_MISMATCH_ERR_STR.into());
+                    }
                     self.join(uri, &data)
                 } else {
                     // TODO: maybe have some upper limit on the number of messages
@@ -247,6 +257,9 @@ impl Sim2h {
             // if the agent sending the messages has been vetted and is in the space
             // then build a message to be proxied to the correct destination, and forward it
             ConnectionState::Joined(space_address, agent_id) => {
+                if &agent_id != signer {
+                    return Err(SIGNER_MISMATCH_ERR_STR.into());
+                }
                 if let Some((is_request, to_uri, message)) =
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
                 {
@@ -263,6 +276,19 @@ impl Sim2h {
         };
         trace!("handle_message done");
         result
+    }
+
+    fn verify_payload(payload: Opaque) -> Sim2hResult<(AgentId, WireMessage)> {
+        let signed_message = SignedWireMessage::try_from(payload)?;
+        let result = signed_message.verify().unwrap();
+        if !result {
+            return Err(VERIFY_FAILED_ERR_STR.into());
+        }
+        let wire_message = WireMessage::try_from(signed_message.payload)?;
+        Ok((
+            Address::from(signed_message.provenance.source()),
+            wire_message,
+        ))
     }
 
     // process transport and  incoming messages from it
@@ -283,17 +309,16 @@ impl Sim2h {
                 .expect("GhostMessage must have a message")
             {
                 RequestToParent::ReceivedData { uri, payload } => {
-                    match WireMessage::try_from(&payload) {
-                        Ok(wire_message) =>
-                            if let Err(error) = self.handle_message(&uri, wire_message) {
+                    match Sim2h::verify_payload(payload.clone()) {
+                        Ok((source, wire_message)) => {
+                            if let Err(error) = self.handle_message(&uri, wire_message, &source) {
                                 error!("Error handling message: {:?}", error);
-                            },
-                        Err(error) =>
-                            error!(
-                                "Could not deserialize received payload into WireMessage!\nError: {:?}\nPayload was: {:?}",
-                                error,
-                                payload
-                            )
+                            }
+                        }
+                        Err(error) => error!(
+                            "Could not verify payload!\nError: {:?}\nPayload was: {:?}",
+                            error, payload
+                        ),
                     }
                 }
                 RequestToParent::IncomingConnection { uri } => {
@@ -570,17 +595,18 @@ impl Sim2h {
                 },
             ));
             // 3. Send store message to everybody in this space
-            if let Err(e) = self.broadcast(
-                space_address.clone(),
-                &store_message,
-                    Some(&provider),
-            ) {
+            if let Err(e) = self.broadcast(space_address.clone(), &store_message, Some(&provider)) {
                 error!("Error during broadcast: {:?}", e);
             }
         }
     }
 
-    fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage, except: Option<&AgentId>) -> Sim2hResult<()> {
+    fn broadcast(
+        &mut self,
+        space: SpaceHash,
+        msg: &WireMessage,
+        except: Option<&AgentId>,
+    ) -> Sim2hResult<()> {
         debug!("Broadcast in space: {:?}", space);
         let all_uris = self
             .spaces
@@ -590,7 +616,7 @@ impl Sim2h {
             .all_agents()
             .clone()
             .into_iter()
-            .filter(|(a,_)| {
+            .filter(|(a, _)| {
                 if let Some(exception) = except {
                     *a != *exception
                 } else {
@@ -634,10 +660,12 @@ impl Sim2h {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::crypto::tests::make_test_agent_with_private_key;
     use lib3h::transport::memory_mock::{
         ghost_transport_memory::*, memory_server::get_memory_verse,
     };
     use lib3h_protocol::data_types::*;
+    use lib3h_sodium::secbuf::SecBuf;
 
     // for this to actually show log entries you also have to run the tests like this:
     // RUST_LOG=lib3h=debug cargo test -- --nocapture
@@ -656,24 +684,43 @@ pub mod tests {
             .try_init();
     }
 
-    fn make_test_agent() -> AgentId {
-        "fake_agent_id".into()
+    const TEST_AGENT_NAME: &str = "fake_agent_id";
+
+    fn make_test_agent() -> (SpaceData, SecBuf) {
+        make_test_agent_with_name(TEST_AGENT_NAME)
+    }
+
+    fn make_test_agent_with_name(name: &str) -> (SpaceData, SecBuf) {
+        make_test_space_data_with_agent(name)
     }
 
     fn make_test_space_data() -> SpaceData {
-        SpaceData {
-            request_id: "".into(),
-            space_address: "fake_space_address".into(),
-            agent_id: make_test_agent(),
-        }
+        let (space_data, _secret_key) = make_test_space_data_with_key();
+        space_data
     }
 
-    fn make_test_space_data_with_agent(agent_id: AgentId) -> SpaceData {
-        SpaceData {
-            request_id: "".into(),
-            space_address: "fake_space_address".into(),
-            agent_id,
-        }
+    fn make_test_space_data_with_key() -> (SpaceData, SecBuf) {
+        let (agent_id, secret_key) = make_test_agent_with_private_key(TEST_AGENT_NAME);
+        (
+            SpaceData {
+                request_id: "".into(),
+                space_address: "fake_space_address".into(),
+                agent_id: agent_id,
+            },
+            secret_key,
+        )
+    }
+
+    fn make_test_space_data_with_agent(agent_name: &str) -> (SpaceData, SecBuf) {
+        let (agent_id, secret_key) = make_test_agent_with_private_key(agent_name);
+        (
+            SpaceData {
+                request_id: "".into(),
+                space_address: "fake_space_address".into(),
+                agent_id,
+            },
+            secret_key,
+        )
     }
 
     fn make_test_join_message() -> WireMessage {
@@ -699,7 +746,9 @@ pub mod tests {
     }
 
     fn make_test_dm_data() -> DirectMessageData {
-        make_test_dm_data_with(make_test_agent(), "fake_to_agent_id".into(), "foo")
+        let from_space_data = make_test_space_data();
+        let (to_space_data, _) = make_test_space_data_with_agent("to_agent_id");
+        make_test_dm_data_with(from_space_data.agent_id, to_space_data.agent_id, "foo")
     }
 
     fn make_test_dm_message() -> WireMessage {
@@ -729,6 +778,15 @@ pub mod tests {
         let transport_id = "test_transport".into();
         let transport = Box::new(GhostTransportMemory::new(transport_id, netname));
         Sim2h::new(transport, Lib3hUri::with_undefined())
+    }
+
+    fn make_signed(
+        secret_key: &mut SecBuf,
+        data: &SpaceData,
+        message: WireMessage,
+    ) -> SignedWireMessage {
+        SignedWireMessage::new_with_key(secret_key, data.clone().agent_id, message)
+            .expect("can make signed message")
     }
 
     #[test]
@@ -793,7 +851,10 @@ pub mod tests {
         );
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
-            "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
+            format!(
+                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"{}\")))",
+                data.agent_id
+            ),
             format!("{:?}", result)
         );
     }
@@ -819,13 +880,14 @@ pub mod tests {
 
         let _result = sim2h.join(&uri, &data);
 
+        let orig_agent = data.agent_id.clone();
         // a leave on behalf of someone else should fail
         data.agent_id = "someone_else_agent_id".into();
         let result = sim2h.leave(&uri, &data);
         assert_eq!(result, Err(SPACE_MISMATCH_ERR_STR.into()));
 
         // a valid leave should work
-        data.agent_id = make_test_agent();
+        data.agent_id = orig_agent;
         let result = sim2h.leave(&uri, &data);
         assert_eq!(result, Ok(()));
         let result = sim2h.get_connection(&uri).clone();
@@ -866,20 +928,20 @@ pub mod tests {
         let result =
             sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message.clone());
         assert_eq!(
-            Err("unvalidated proxy agent fake_to_agent_id".into()),
+            Err("unvalidated proxy agent HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz".into()),
             result,
         );
 
         // proxy a dm message
         // first we have to setup the to agent in the space
-        let to_agent_data = make_test_space_data_with_agent("fake_to_agent_id".into());
+        let (to_agent_data, _key) = make_test_space_data_with_agent("to_agent_id");
         let to_uri = Lib3hUri::with_memory("addr_2");
         let _ = sim2h.handle_incoming_connect(to_uri.clone());
         let _ = sim2h.join(&to_uri, &to_agent_data);
 
         let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
         assert_eq!(
-            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(HandleSendDirectMessage(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"fake_to_agent_id\"), from_agent_id: HashString(\"fake_agent_id\"), content: \"foo\" })))))",
+            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(HandleSendDirectMessage(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz\"), from_agent_id: HashString(\"HcSCinKU7Nqnf8n4ixOaaHzxdwg8x94t67rESVyCR9yo8csrQRcZGXT6q4ahmwr\"), content: \"foo\" })))))",
             format!("{:?}", result)
         );
 
@@ -888,7 +950,7 @@ pub mod tests {
         let message = make_test_dm_message_response_with(make_test_dm_data());
         let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
         assert_eq!(
-            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(SendDirectMessageResult(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"fake_to_agent_id\"), from_agent_id: HashString(\"fake_agent_id\"), content: \"foo\" })))))",
+            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(SendDirectMessageResult(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz\"), from_agent_id: HashString(\"HcSCinKU7Nqnf8n4ixOaaHzxdwg8x94t67rESVyCR9yo8csrQRcZGXT6q4ahmwr\"), content: \"foo\" })))))",
                 format!("{:?}", result)
         );
 
@@ -909,26 +971,37 @@ pub mod tests {
             verse.get_network(netname)
         };
         let uri = network.lock().unwrap().bind();
+        let (space_data, _key) = make_test_agent();
+        let test_agent = space_data.agent_id.clone();
 
         // a message from an unconnected agent should return an error
-        let result = sim2h.handle_message(&uri, make_test_err_message());
+        let result = sim2h.handle_message(&uri, make_test_err_message(), &test_agent);
         assert_eq!(result, Err(format!("no connection for {}", &uri).into()));
 
         // a non-join message from an unvalidated but connected agent should queue the message
         let _result = sim2h.handle_incoming_connect(uri.clone());
-        let result = sim2h.handle_message(&uri, make_test_err_message());
+        let result = sim2h.handle_message(&uri, make_test_err_message(), &test_agent);
         assert_eq!(result, Ok(()));
         assert_eq!(
             "Some(Limbo([Err(Other(\"\\\"fake_error\\\"\"))]))",
             format!("{:?}", sim2h.get_connection(&uri))
         );
 
+        // a valid join message signed by the wrong agent should return an signer mismatch error
+        let (other_agent_space, _) = make_test_agent_with_name("other_agent");
+        let result =
+            sim2h.handle_message(&uri, make_test_join_message(), &other_agent_space.agent_id);
+        assert_eq!(result, Err(SIGNER_MISMATCH_ERR_STR.into()));
+
         // a valid join message from a connected agent should update its connection status
-        let result = sim2h.handle_message(&uri, make_test_join_message());
+        let result = sim2h.handle_message(&uri, make_test_join_message(), &test_agent);
         assert_eq!(result, Ok(()));
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
-            "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
+            format!(
+                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"{}\")))",
+                space_data.agent_id
+            ),
             format!("{:?}", result)
         );
 
@@ -936,12 +1009,15 @@ pub mod tests {
         // first we have to setup the to agent on the in-memory-network and in the space
         let to_uri = network.lock().unwrap().bind();
         let _ = sim2h.handle_incoming_connect(to_uri.clone());
-        let to_agent_data = make_test_space_data_with_agent("fake_to_agent_id".into());
+        let (to_agent_data, _key) = make_test_space_data_with_agent("to_agent_id");
         let _ = sim2h.join(&to_uri, &to_agent_data);
 
         // then we can make a message and handle it.
         let message = make_test_dm_message();
-        let result = sim2h.handle_message(&uri, message);
+        let result = sim2h.handle_message(&uri, message.clone(), &other_agent_space.agent_id);
+        assert_eq!(result, Err(SIGNER_MISMATCH_ERR_STR.into()));
+
+        let result = sim2h.handle_message(&uri, message, &test_agent);
         assert_eq!(result, Ok(()));
 
         // which should result in showing up in the to_uri's inbox in the in-memory netowrk
@@ -955,7 +1031,7 @@ pub mod tests {
             assert!(did_work);
             let dm = &events[3];
             assert_eq!(
-                "ReceivedData(Lib3hUri(\"mem://addr_3/\"), \"{\\\"Lib3hToClient\\\":{\\\"HandleSendDirectMessage\\\":{\\\"space_address\\\":\\\"fake_space_address\\\",\\\"request_id\\\":\\\"\\\",\\\"to_agent_id\\\":\\\"fake_to_agent_id\\\",\\\"from_agent_id\\\":\\\"fake_agent_id\\\",\\\"content\\\":\\\"Zm9v\\\"}}}\")",
+                "ReceivedData(Lib3hUri(\"mem://addr_3/\"), \"{\\\"Lib3hToClient\\\":{\\\"HandleSendDirectMessage\\\":{\\\"space_address\\\":\\\"fake_space_address\\\",\\\"request_id\\\":\\\"\\\",\\\"to_agent_id\\\":\\\"HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz\\\",\\\"from_agent_id\\\":\\\"HcSCinKU7Nqnf8n4ixOaaHzxdwg8x94t67rESVyCR9yo8csrQRcZGXT6q4ahmwr\\\",\\\"content\\\":\\\"Zm9v\\\"}}}\")",
                 format!("{:?}", dm))
         } else {
             assert!(false)
@@ -967,7 +1043,7 @@ pub mod tests {
         netname: &str,
         sim2h_uri: &Lib3hUri,
         agent_name: &str,
-    ) -> (Lib3hUri, SpaceData) {
+    ) -> (SecBuf, Lib3hUri, SpaceData) {
         let network = {
             let mut verse = get_memory_verse();
             verse.get_network(netname)
@@ -975,18 +1051,19 @@ pub mod tests {
         let agent_uri = network.lock().unwrap().bind();
 
         // connect to sim2h with join messages
-        let space_data = make_test_space_data_with_agent(agent_name.into());
-        let join: Opaque = make_test_join_message_with_space_data(space_data.clone()).into();
+        let (space_data, mut secret_key) = make_test_space_data_with_agent(agent_name);
+        let join = make_test_join_message_with_space_data(space_data.clone());
+        let signed_join: Opaque = make_signed(&mut secret_key, &space_data, join).into();
         {
             let mut net = network.lock().unwrap();
             let server = net
                 .get_server(sim2h_uri)
                 .expect("there should be a server for to_uri");
             server.request_connect(&agent_uri).expect("can connect");
-            let result = server.post(&agent_uri, &join.to_vec());
+            let result = server.post(&agent_uri, &signed_join.to_vec());
             assert_eq!(result, Ok(()));
         }
-        (agent_uri, space_data)
+        (secret_key, agent_uri, space_data)
     }
 
     #[test]
@@ -998,8 +1075,9 @@ pub mod tests {
         let sim2h_uri = sim2h.bound_uri.clone().expect("should have bound");
 
         // set up two other agents on the memory-network
-        let (agent1_uri, space_data1) = test_setup_agent(netname, &sim2h_uri, "agent1");
-        let (agent2_uri, space_data2) = test_setup_agent(netname, &sim2h_uri, "agent2");
+        let (mut secret_key1, agent1_uri, space_data1) =
+            test_setup_agent(netname, &sim2h_uri, "agent1");
+        let (_, agent2_uri, space_data2) = test_setup_agent(netname, &sim2h_uri, "agent2");
 
         let _result = sim2h.process();
         assert_eq!(
@@ -1012,8 +1090,8 @@ pub mod tests {
         );
 
         // now send a direct message from agent1 through sim2h which should arrive at agent2
-        let data = make_test_dm_data_with(
-            space_data1.agent_id,
+        let dm_data = make_test_dm_data_with(
+            space_data1.agent_id.clone(),
             space_data2.agent_id,
             "come here watson",
         );
@@ -1022,13 +1100,15 @@ pub mod tests {
             let mut verse = get_memory_verse();
             verse.get_network(netname)
         };
-        let message: Opaque = make_test_dm_message_with(data).into();
+
+        let message = make_test_dm_message_with(dm_data.clone());
+        let signed_message: Opaque = make_signed(&mut secret_key1, &space_data1, message).into();
         {
             let mut net = network.lock().unwrap();
             let server = net
                 .get_server(&sim2h_uri)
                 .expect("there should be a server for to_uri");
-            let result = server.post(&agent1_uri, &message.to_vec());
+            let result = server.post(&agent1_uri, &signed_message.to_vec());
             assert_eq!(result, Ok(()));
         }
         let _result = sim2h.process();
@@ -1042,7 +1122,7 @@ pub mod tests {
                 assert!(did_work);
                 let dm = &events[3];
                 assert_eq!(
-                   "ReceivedData(Lib3hUri(\"mem://addr_1/\"), \"{\\\"Lib3hToClient\\\":{\\\"HandleSendDirectMessage\\\":{\\\"space_address\\\":\\\"fake_space_address\\\",\\\"request_id\\\":\\\"\\\",\\\"to_agent_id\\\":\\\"agent2\\\",\\\"from_agent_id\\\":\\\"agent1\\\",\\\"content\\\":\\\"Y29tZSBoZXJlIHdhdHNvbg==\\\"}}}\")",
+                    "ReceivedData(Lib3hUri(\"mem://addr_1/\"), \"{\\\"Lib3hToClient\\\":{\\\"HandleSendDirectMessage\\\":{\\\"space_address\\\":\\\"fake_space_address\\\",\\\"request_id\\\":\\\"\\\",\\\"to_agent_id\\\":\\\"HcScIYA59KD3q734m3YThPPaB594afvuyvRyYzK86575g6Pe66GCA4AJF3EGroa\\\",\\\"from_agent_id\\\":\\\"HcSCI4uqnzxGv4bqbbBdaVrg5V4F7sxr7Fat7UaAYx9giwadHij6VeXHtjt6dsi\\\",\\\"content\\\":\\\"Y29tZSBoZXJlIHdhdHNvbg==\\\"}}}\")",
                     format!("{:?}", dm))
             } else {
                 assert!(false)
@@ -1057,11 +1137,12 @@ pub mod tests {
         let mut sim2h = make_test_sim2h_memnet(netname);
         let _result = sim2h.process();
         let sim2h_uri = sim2h.bound_uri.clone().expect("should have bound");
-        let (agent_uri, data) = test_setup_agent(netname, &sim2h_uri, "agent");
+        let (mut secret_key, agent_uri, space_data) =
+            test_setup_agent(netname, &sim2h_uri, "agent");
         let _result = sim2h.process();
 
         assert_eq!(
-            sim2h.lookup_joined(&data.space_address, &data.agent_id),
+            sim2h.lookup_joined(&space_data.space_address, &space_data.agent_id),
             Some(agent_uri.clone())
         );
 
@@ -1079,7 +1160,7 @@ pub mod tests {
         let _result = sim2h.process();
 
         assert_eq!(
-            sim2h.lookup_joined(&data.space_address, &data.agent_id),
+            sim2h.lookup_joined(&space_data.space_address, &space_data.agent_id),
             None
         );
 
@@ -1091,10 +1172,15 @@ pub mod tests {
                 .expect("there should be a server for sim2h_uri");
             server.request_connect(&agent_uri).expect("can connect");
 
-            let data =
-                make_test_dm_data_with(data.agent_id.clone(), data.agent_id, "come here watson");
-            let message: Opaque = make_test_dm_message_with(data).into();
-            let result = server.post(&agent_uri, &message.to_vec());
+            let dm_data = make_test_dm_data_with(
+                space_data.agent_id.clone(),
+                space_data.agent_id.clone(),
+                "come here watson",
+            );
+
+            let message = make_test_dm_message_with(dm_data.clone());
+            let signed_message: Opaque = make_signed(&mut secret_key, &space_data, message).into();
+            let result = server.post(&agent_uri, &signed_message.to_vec());
             assert_eq!(result, Ok(()));
         }
         let _result = sim2h.process();
