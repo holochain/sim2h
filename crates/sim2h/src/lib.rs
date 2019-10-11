@@ -7,18 +7,18 @@ extern crate detach;
 extern crate serde;
 
 pub mod cache;
-pub mod connected_agent;
+pub mod connection_state;
 pub mod error;
 pub mod wire_message;
 
 use crate::error::*;
 use cache::*;
-use connected_agent::*;
-pub use wire_message::WireMessage;
+use connection_state::*;
+pub use wire_message::{WireError, WireMessage};
 
 use detach::prelude::*;
 use holochain_tracing::Span;
-use lib3h::transport::{protocol::*};
+use lib3h::transport::protocol::*;
 use lib3h_protocol::{
     data_types::{EntryData, FetchEntryData, GetListData, Opaque, SpaceData, StoreEntryAspectData},
     protocol::*,
@@ -35,9 +35,10 @@ use std::{collections::HashMap, convert::TryFrom};
 
 pub struct Sim2h {
     pub bound_uri: Option<Lib3hUri>,
-    connection_states: RwLock<HashMap<Lib3hUri, ConnectedAgent>>,
+    connection_states: RwLock<HashMap<Lib3hUri, ConnectionState>>,
     spaces: HashMap<SpaceHash, RwLock<Space>>,
     transport: Detach<TransportActorParentWrapperDyn<Self>>,
+    num_ticks: u32,
 }
 
 impl Sim2h {
@@ -49,6 +50,7 @@ impl Sim2h {
             connection_states: RwLock::new(HashMap::new()),
             spaces: HashMap::new(),
             transport: t,
+            num_ticks: 0,
         };
 
         debug!("Trying to bind to {}...", bind_spec);
@@ -105,10 +107,10 @@ impl Sim2h {
 
     // adds an agent to a space
     fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
-        if let Some(ConnectedAgent::Limbo) = self.get_connection(uri) {
+        if let Some(ConnectionState::Limbo(pending_messages)) = self.get_connection(uri) {
             let _ = self.connection_states.write().insert(
                 uri.clone(),
-                ConnectedAgent::JoinedSpace(data.space_address.clone(), data.agent_id.clone()),
+                ConnectionState::Joined(data.space_address.clone(), data.agent_id.clone()),
             );
             if !self.spaces.contains_key(&data.space_address) {
                 self.spaces
@@ -137,6 +139,14 @@ impl Sim2h {
                 data.space_address.clone(),
                 data.agent_id.clone(),
             );
+            for message in *pending_messages {
+                if let Err(err) = self.handle_message(uri, message.clone()) {
+                    error!(
+                        "Error while handling limbo pending message {:?} for {}: {}",
+                        message, uri, err
+                    );
+                }
+            }
             Ok(())
         } else {
             Err(format!("no agent found in limbo at {} ", uri).into())
@@ -145,7 +155,7 @@ impl Sim2h {
 
     // removes an agent from a space
     fn leave(&self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
-        if let Some(ConnectedAgent::JoinedSpace(space_address, agent_id)) = self.get_connection(uri)
+        if let Some(ConnectionState::Joined(space_address, agent_id)) = self.get_connection(uri)
         {
             if (data.agent_id != agent_id) || (data.space_address != space_address) {
                 Err(SPACE_MISMATCH_ERR_STR.into())
@@ -160,7 +170,7 @@ impl Sim2h {
 
     // removes a uri from connection and from spaces
     fn disconnect(&self, uri: &Lib3hUri) {
-        if let Some(ConnectedAgent::JoinedSpace(space_address, agent_id)) =
+        if let Some(ConnectionState::Joined(space_address, agent_id)) =
             self.connection_states.write().remove(uri)
         {
             self.spaces
@@ -172,7 +182,7 @@ impl Sim2h {
     }
 
     // get the connection status of an agent
-    fn get_connection(&self, uri: &Lib3hUri) -> Option<ConnectedAgent> {
+    fn get_connection(&self, uri: &Lib3hUri) -> Option<ConnectionState> {
         let reader = self.connection_states.read();
         reader.get(uri).map(|ca| (*ca).clone())
     }
@@ -191,7 +201,7 @@ impl Sim2h {
         if let Some(_old) = self
             .connection_states
             .write()
-            .insert(uri.clone(), ConnectedAgent::new())
+            .insert(uri.clone(), ConnectionState::new())
         {
             println!("TODO should remove {}", uri); //TODO
         };
@@ -200,25 +210,35 @@ impl Sim2h {
 
     // handler for messages sent to sim2h
     fn handle_message(&mut self, uri: &Lib3hUri, message: WireMessage) -> Sim2hResult<()> {
-        let agent = self
+        let mut agent = self
             .get_connection(uri)
             .ok_or_else(|| format!("no connection for {}", uri))?;
+        // TODO: anyway, but especially with this Ping/Pong, mitigate DoS attacks.
+        if message == WireMessage::Ping {
+            self.send(uri.clone(), &WireMessage::Pong);
+        }
         match agent {
             // if the agent sending the message is in limbo, then the only message
             // allowed is a join message.
-            ConnectedAgent::Limbo => {
+            ConnectionState::Limbo(ref mut pending_messages) => {
                 if let WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(data)) = message {
                     self.join(uri, &data)
                 } else {
-                    error!("Got message while still in LIMBO: {:?}", message);
-                    Err(format!("no agent validated at {} ", uri).into())
+                    // TODO: maybe have some upper limit on the number of messages
+                    // we allow to queue before dropping the connections
+                    pending_messages.push(message);
+                    let _ = self.connection_states.write().insert(uri.clone(), agent);
+                    self.send(
+                        uri.clone(),
+                        &WireMessage::Err(WireError::MessageWhileInLimbo),
+                    );
+                    Ok(())
                 }
             }
-            //ConnectionState::RequestedJoiningSpace => self.process_join_request(agent),
 
             // if the agent sending the messages has been vetted and is in the space
             // then build a message to be proxied to the correct destination, and forward it
-            ConnectedAgent::JoinedSpace(space_address, agent_id) => {
+            ConnectionState::Joined(space_address, agent_id) => {
                 if let Some((is_request, to_uri, message)) =
                     self.prepare_proxy(uri, &space_address, &agent_id, message)?
                 {
@@ -237,6 +257,12 @@ impl Sim2h {
 
     // process transport and  incoming messages from it
     pub fn process(&mut self) -> Sim2hResult<()> {
+        self.num_ticks += 1;
+        if self.num_ticks % 2000 == 0 {
+            //std::io::stdout().flush()?;
+            debug!(".");
+            self.num_ticks = 0;
+        }
         detach_run!(&mut self.transport, |t| t.process(self)).map_err(|e| format!("{:?}", e))?;
         for mut transport_message in self.transport.drain_messages() {
             match transport_message
@@ -262,20 +288,16 @@ impl Sim2h {
                         error!("Error handling incomming connection: {:?}", error);
                     }
                 }
-                RequestToParent::ErrorOccured { uri, error } => {
-                    match error.kind() {
-                        lib3h::transport::error::ErrorKind::Disconnect => {
-                            debug!("Disconnecting {} after connection reset", uri);
-                            self.disconnect(&uri);
-                        }
-                        _ => {
-                            error!(
-                                "Transport error occurred on connection to {:?}: {:?}",
-                                uri, error,
-                            )
-                        }
+                RequestToParent::ErrorOccured { uri, error } => match error.kind() {
+                    lib3h::transport::error::ErrorKind::Disconnect => {
+                        debug!("Disconnecting {} after connection reset", uri);
+                        self.disconnect(&uri);
                     }
-                }
+                    _ => error!(
+                        "Transport error occurred on connection to {:?}: {:?}",
+                        uri, error,
+                    ),
+                },
             }
         }
         Ok(())
@@ -531,13 +553,17 @@ impl Sim2h {
                 },
             ));
             // 3. Send store message to everybody in this space
-            if let Err(e) = self.broadcast(space_address.clone(), &store_message) {
+            if let Err(e) = self.broadcast(
+                space_address.clone(),
+                &store_message,
+                    Some(&provider),
+            ) {
                 error!("Error during broadcast: {:?}", e);
             }
         }
     }
 
-    fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage) -> Sim2hResult<()> {
+    fn broadcast(&mut self, space: SpaceHash, msg: &WireMessage, except: Option<&AgentId>) -> Sim2hResult<()> {
         debug!("Broadcast in space: {:?}", space);
         let all_uris = self
             .spaces
@@ -545,6 +571,16 @@ impl Sim2h {
             .ok_or("No such space")?
             .read()
             .all_agents()
+            .clone()
+            .into_iter()
+            .filter(|(a,_)| {
+                if let Some(exception) = except {
+                    *a != *exception
+                } else {
+                    true
+                }
+            })
+            .collect::<HashMap<AgentId, Lib3hUri>>()
             .values()
             .cloned()
             .collect::<Vec<_>>();
@@ -574,6 +610,7 @@ impl Sim2h {
         if let Err(e) = send_result {
             error!("GhostError during broadcast send: {:?}", e)
         }
+        debug!("sent.");
     }
 }
 
@@ -702,18 +739,18 @@ pub mod tests {
         assert_eq!(result, Ok(true));
 
         let result = sim2h.get_connection(&uri).clone();
-        assert_eq!("Some(Limbo)", format!("{:?}", result));
+        assert_eq!("Some(Limbo([]))", format!("{:?}", result));
 
         // pretend the agent has joined the space
         let _ = sim2h.connection_states.write().insert(
             uri.clone(),
-            ConnectedAgent::JoinedSpace("fake_agent".into(), "fake_space".into()),
+            ConnectionState::Joined("fake_agent".into(), "fake_space".into()),
         );
         // if we get a second incoming connection, the state should be reset.
         let result = sim2h.handle_incoming_connect(uri.clone());
         assert_eq!(result, Ok(true));
         let result = sim2h.get_connection(&uri).clone();
-        assert_eq!("Some(Limbo)", format!("{:?}", result));
+        assert_eq!("Some(Limbo([]))", format!("{:?}", result));
     }
 
     #[test]
@@ -739,7 +776,7 @@ pub mod tests {
         );
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
-            "Some(JoinedSpace(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
+            "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
             format!("{:?}", result)
         );
     }
@@ -860,12 +897,13 @@ pub mod tests {
         let result = sim2h.handle_message(&uri, make_test_err_message());
         assert_eq!(result, Err(format!("no connection for {}", &uri).into()));
 
-        // a non-join message from an unvalidated but connected agent should return an error
+        // a non-join message from an unvalidated but connected agent should queue the message
         let _result = sim2h.handle_incoming_connect(uri.clone());
         let result = sim2h.handle_message(&uri, make_test_err_message());
+        assert_eq!(result, Ok(()));
         assert_eq!(
-            result,
-            Err(format!("no agent validated at {} ", &uri).into())
+            "Some(Limbo([Err(Other(\"\\\"fake_error\\\"\"))]))",
+            format!("{:?}", sim2h.get_connection(&uri))
         );
 
         // a valid join message from a connected agent should update its connection status
@@ -873,7 +911,7 @@ pub mod tests {
         assert_eq!(result, Ok(()));
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
-            "Some(JoinedSpace(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
+            "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"fake_agent_id\")))",
             format!("{:?}", result)
         );
 
@@ -1010,15 +1048,15 @@ pub mod tests {
             Some(agent_uri.clone())
         );
 
+        let network = {
+            let mut verse = get_memory_verse();
+            verse.get_network(netname)
+        };
         {
-            let network = {
-                let mut verse = get_memory_verse();
-                verse.get_network(netname)
-            };
             let mut net = network.lock().unwrap();
             let server = net
                 .get_server(&sim2h_uri)
-                .expect("there should be a server for to_uri");
+                .expect("there should be a server for sim2h_uri");
             server.request_close(&agent_uri).expect("can disconnect");
         }
         let _result = sim2h.process();
@@ -1027,5 +1065,37 @@ pub mod tests {
             sim2h.lookup_joined(&data.space_address, &data.agent_id),
             None
         );
+
+        // connect again and send a dm message
+        {
+            let mut net = network.lock().unwrap();
+            let server = net
+                .get_server(&sim2h_uri)
+                .expect("there should be a server for sim2h_uri");
+            server.request_connect(&agent_uri).expect("can connect");
+
+            let data =
+                make_test_dm_data_with(data.agent_id.clone(), data.agent_id, "come here watson");
+            let message: Opaque = make_test_dm_message_with(data).into();
+            let result = server.post(&agent_uri, &message.to_vec());
+            assert_eq!(result, Ok(()));
+        }
+        let _result = sim2h.process();
+        let _result = sim2h.process();
+        {
+            let mut net = network.lock().unwrap();
+            let server = net
+                .get_server(&agent_uri)
+                .expect("there should be a server for agent_uri");
+            if let Ok((did_work, events)) = server.process() {
+                assert!(did_work);
+                let dm = &events[3];
+                assert_eq!(
+                    "ReceivedData(Lib3hUri(\"mem://addr_1/\"), \"{\\\"Err\\\":\\\"MessageWhileInLimbo\\\"}\")",
+                    format!("{:?}",dm))
+            } else {
+                assert!(false)
+            }
+        }
     }
 }

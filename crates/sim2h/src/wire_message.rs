@@ -3,7 +3,11 @@ use lib3h_protocol::data_types::Opaque;
 use lib3h_protocol::protocol::*;
 use std::convert::TryFrom;
 
-pub type Sim2hWireError = String;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum WireError {
+    MessageWhileInLimbo,
+    Other(String),
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireMessage {
@@ -11,14 +15,16 @@ pub enum WireMessage {
     ClientToLib3hResponse(ClientToLib3hResponse),
     Lib3hToClient(Lib3hToClient),
     Lib3hToClientResponse(Lib3hToClientResponse),
-    Err(Sim2hWireError),
-    SignatureChallenge(String),
-    SignatureChallengeResponse(String),
+    Err(WireError),
+    Ping,
+    Pong,
 }
 
 impl WireMessage {
     pub fn message_type(&self) -> String {
         String::from(match self {
+            WireMessage::Ping => "Ping",
+            WireMessage::Pong => "Pong",
             WireMessage::ClientToLib3h(ClientToLib3h::Bootstrap(_)) => "[C>L]Bootstrap",
             WireMessage::ClientToLib3h(ClientToLib3h::FetchEntry(_)) => "[C>L]FetchEntry",
             WireMessage::ClientToLib3h(ClientToLib3h::JoinSpace(_)) => "[C>L]JoinSpace",
@@ -91,8 +97,6 @@ impl WireMessage {
             WireMessage::Lib3hToClientResponse(
                 Lib3hToClientResponse::HandleStoreEntryAspectResult,
             ) => "[L<C]HandleStoreEntryAspectResult",
-            WireMessage::SignatureChallenge(_) => "[Signature Challenge]",
-            WireMessage::SignatureChallengeResponse(_) => "[Signature Challenge Response]",
             WireMessage::Err(_) => "[Error] {:?}",
         })
     }
@@ -107,7 +111,7 @@ impl From<WireMessage> for Opaque {
 }
 
 impl TryFrom<Opaque> for WireMessage {
-    type Error = Sim2hWireError;
+    type Error = WireError;
     fn try_from(message: Opaque) -> Result<Self, Self::Error> {
         Ok(serde_json::from_str(&String::from_utf8_lossy(&message))
             .map_err(|e| format!("{:?}", e))?)
@@ -115,10 +119,22 @@ impl TryFrom<Opaque> for WireMessage {
 }
 
 impl TryFrom<&Opaque> for WireMessage {
-    type Error = Sim2hWireError;
+    type Error = WireError;
     fn try_from(message: &Opaque) -> Result<Self, Self::Error> {
         Ok(serde_json::from_str(&String::from_utf8_lossy(message))
             .map_err(|e| format!("{:?}", e))?)
+    }
+}
+
+impl From<&str> for WireError {
+    fn from(err: &str) -> Self {
+        WireError::Other(format!("{:?}", err))
+    }
+}
+
+impl From<String> for WireError {
+    fn from(err: String) -> Self {
+        WireError::Other(err)
     }
 }
 
@@ -132,7 +148,7 @@ pub mod tests {
 
         let opaque_msg: Opaque = msg.clone().into();
         assert_eq!(
-            "\"{\\\"Err\\\":\\\"fake_error\\\"}\"",
+            "\"{\\\"Err\\\":{\\\"Other\\\":\\\"\\\\\\\"fake_error\\\\\\\"\\\"}}\"",
             format!("{}", opaque_msg)
         );
         let roundtrip_msg = WireMessage::try_from(opaque_msg).expect("deserialize should work");
