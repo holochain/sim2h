@@ -768,7 +768,7 @@ pub mod tests {
         data: &SpaceData,
         message: WireMessage,
     ) -> SignedWireMessage {
-        SignedWireMessage::new(secret_key, data.clone().agent_id, message)
+        SignedWireMessage::new_with_key(secret_key, data.clone().agent_id, message)
             .expect("can make signed message")
     }
 

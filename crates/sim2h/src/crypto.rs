@@ -23,7 +23,14 @@ pub struct SignedWireMessage {
 }
 
 impl SignedWireMessage {
-    pub fn new(
+    pub fn new(message: WireMessage, provenance: Provenance) -> Self {
+        SignedWireMessage {
+            provenance,
+            payload: message.into(),
+        }
+    }
+
+    pub fn new_with_key(
         mut secret_key: &mut SecBuf,
         agent_id: Address,
         message: WireMessage,
@@ -185,7 +192,7 @@ pub mod tests {
         let message = WireMessage::Err("fake_error".into());
 
         let signed_message =
-            SignedWireMessage::new(&mut secret_key, agent_id, message).expect("should construct");
+            SignedWireMessage::new_with_key(&mut secret_key, agent_id, message).expect("should construct");
         assert_eq!(Ok(true), signed_message.verify());
     }
 
