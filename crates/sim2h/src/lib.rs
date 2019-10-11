@@ -111,50 +111,51 @@ impl Sim2h {
     // adds an agent to a space
     fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
         trace!("join entered");
-        let result = if let Some(ConnectionState::Limbo(pending_messages)) = self.get_connection(uri) {
-            let _ = self.connection_states.write().insert(
-                uri.clone(),
-                ConnectionState::Joined(data.space_address.clone(), data.agent_id.clone()),
-            );
-            if !self.spaces.contains_key(&data.space_address) {
-                self.spaces
-                    .insert(data.space_address.clone(), RwLock::new(Space::new()));
-                info!(
-                    "\n\n+++++++++++++++\nNew Space: {}\n+++++++++++++++\n",
-                    data.space_address
+        let result =
+            if let Some(ConnectionState::Limbo(pending_messages)) = self.get_connection(uri) {
+                let _ = self.connection_states.write().insert(
+                    uri.clone(),
+                    ConnectionState::Joined(data.space_address.clone(), data.agent_id.clone()),
                 );
-            }
-            self.spaces
-                .get(&data.space_address)
-                .unwrap()
-                .write()
-                .join_agent(data.agent_id.clone(), uri.clone());
-            info!(
-                "Agent {:?} joined space {:?}",
-                data.agent_id, data.space_address
-            );
-            self.request_authoring_list(
-                uri.clone(),
-                data.space_address.clone(),
-                data.agent_id.clone(),
-            );
-            self.request_gossiping_list(
-                uri.clone(),
-                data.space_address.clone(),
-                data.agent_id.clone(),
-            );
-            for message in *pending_messages {
-                if let Err(err) = self.handle_message(uri, message.clone(), &data.agent_id) {
-                    error!(
-                        "Error while handling limbo pending message {:?} for {}: {}",
-                        message, uri, err
+                if !self.spaces.contains_key(&data.space_address) {
+                    self.spaces
+                        .insert(data.space_address.clone(), RwLock::new(Space::new()));
+                    info!(
+                        "\n\n+++++++++++++++\nNew Space: {}\n+++++++++++++++\n",
+                        data.space_address
                     );
                 }
-            }
-            Ok(())
-        } else {
-            Err(format!("no agent found in limbo at {} ", uri).into())
-        };
+                self.spaces
+                    .get(&data.space_address)
+                    .unwrap()
+                    .write()
+                    .join_agent(data.agent_id.clone(), uri.clone());
+                info!(
+                    "Agent {:?} joined space {:?}",
+                    data.agent_id, data.space_address
+                );
+                self.request_authoring_list(
+                    uri.clone(),
+                    data.space_address.clone(),
+                    data.agent_id.clone(),
+                );
+                self.request_gossiping_list(
+                    uri.clone(),
+                    data.space_address.clone(),
+                    data.agent_id.clone(),
+                );
+                for message in *pending_messages {
+                    if let Err(err) = self.handle_message(uri, message.clone(), &data.agent_id) {
+                        error!(
+                            "Error while handling limbo pending message {:?} for {}: {}",
+                            message, uri, err
+                        );
+                    }
+                }
+                Ok(())
+            } else {
+                Err(format!("no agent found in limbo at {} ", uri).into())
+            };
         trace!("join done");
         result
     }
@@ -326,16 +327,19 @@ impl Sim2h {
                         error!("Error handling incomming connection: {:?}", error);
                     }
                 }
-                RequestToParent::ErrorOccured { uri, error } => match error.kind() {
-                    lib3h::transport::error::ErrorKind::Disconnect => {
-                        debug!("Disconnecting {} after connection reset", uri);
-                        self.disconnect(&uri);
-                    }
-                    _ => error!(
-                        "Transport error occurred on connection to {:?}: {:?}",
+                RequestToParent::Disconnect(uri) => {
+                    debug!("Disconnecting {} after connection reset", uri);
+                    self.disconnect(&uri);
+                }
+                RequestToParent::Unbind(uri) => {
+                    panic!("Got Unbind from {}", uri);
+                }
+                RequestToParent::ErrorOccured { uri, error } => {
+                    error!(
+                        "Transport error occurred on connection to {}: {:?}",
                         uri, error,
-                    ),
-                },
+                    );
+                }
             }
         }
         trace!("process done");
