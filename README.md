@@ -10,6 +10,27 @@
 
 A multiplexer for nodes using [lib3h](https://github.com/holochain/lib3h) protocol to connect through a centralized security and validation service.
 
+## Usage
+
+```shell
+$ ./sim2h_server --help
+```
+```shell
+sim2h_server 0.0.1
+Holochain Core Dev Team <devcore@holochain.org>
+A simulation of lib3h - server executable
+
+USAGE:
+    sim2h_server [OPTIONS]
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+OPTIONS:
+    -p, --port <port>    The port to run the websocket server at [default: 9000]
+```
+
 ## License
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
