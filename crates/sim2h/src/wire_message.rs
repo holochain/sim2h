@@ -113,8 +113,7 @@ impl From<WireMessage> for Opaque {
 
 impl From<WireMessage> for String {
     fn from(message: WireMessage) -> String {
-        serde_json::to_string(&message)
-            .expect("wiremessage should serialize")
+        serde_json::to_string(&message).expect("wiremessage should serialize")
     }
 }
 

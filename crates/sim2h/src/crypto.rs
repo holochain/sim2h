@@ -5,11 +5,11 @@ use crate::{
     wire_message::WireMessage,
 };
 use hcid::*;
+pub use holochain_core_types::signature::Provenance;
 use holochain_core_types::{
     agent::Base32,
     error::{HcResult, HolochainError},
 };
-pub use holochain_core_types::signature::Provenance;
 use holochain_persistence_api::cas::content::Address;
 use lib3h_protocol::data_types::Opaque;
 use lib3h_sodium::{secbuf::SecBuf, sign};
@@ -191,8 +191,8 @@ pub mod tests {
 
         let message = WireMessage::Err("fake_error".into());
 
-        let signed_message =
-            SignedWireMessage::new_with_key(&mut secret_key, agent_id, message).expect("should construct");
+        let signed_message = SignedWireMessage::new_with_key(&mut secret_key, agent_id, message)
+            .expect("should construct");
         assert_eq!(Ok(true), signed_message.verify());
     }
 
