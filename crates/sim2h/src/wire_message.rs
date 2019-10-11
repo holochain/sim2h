@@ -111,6 +111,13 @@ impl From<WireMessage> for Opaque {
     }
 }
 
+impl From<WireMessage> for String {
+    fn from(message: WireMessage) -> String {
+        serde_json::to_string(&message)
+            .expect("wiremessage should serialize")
+    }
+}
+
 impl TryFrom<Opaque> for WireMessage {
     type Error = WireError;
     fn try_from(message: Opaque) -> Result<Self, Self::Error> {
