@@ -26,3 +26,4 @@ impl fmt::Display for Sim2hError {
 }
 pub type Sim2hResult<T> = result::Result<T, Sim2hError>;
 pub const SPACE_MISMATCH_ERR_STR: &str = "space/agent id mismatch";
+pub const VERIFY_FAILED_ERR_STR: &str = "message signature failed verify";

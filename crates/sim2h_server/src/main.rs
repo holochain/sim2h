@@ -1,5 +1,6 @@
 extern crate structopt;
 
+use lib3h::transport::websocket::tls::TlsCertificate;
 use lib3h::transport::{
     protocol::DynTransportActor,
     websocket::{actor::GhostTransportWebsocket, tls::TlsConfig},
@@ -9,7 +10,6 @@ use log::error;
 use sim2h::Sim2h;
 use std::process::exit;
 use structopt::StructOpt;
-use lib3h::transport::websocket::tls::TlsCertificate;
 
 #[derive(StructOpt)]
 struct Cli {
