@@ -5,7 +5,7 @@ let
 
  # point this to your local config.nix file for this project
  # example.config.nix shows and documents a lot of the options
- config = import ./config.nix;
+ config = import ./scripts/nix/config.nix;
 
  # START HOLONIX IMPORT BOILERPLATE
  holonix = import (
@@ -30,6 +30,17 @@ with holonix.pkgs;
 
    ++ (holonix.pkgs.callPackage ./.circleci {
     pkgs = holonix.pkgs;
+   }).buildInputs
+
+   # release hooks
+   ++ (holonix.pkgs.callPackage ./scripts/nix/release {
+     pkgs = holonix.pkgs;
+     config = config;
+   }).buildInputs
+
+   # test script
+   ++ (holonix.pkgs.callPackage ./scripts/nix/test {
+     pkgs = holonix.pkgs;
    }).buildInputs
 
   ;

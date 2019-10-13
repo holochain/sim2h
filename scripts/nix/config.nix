@@ -51,11 +51,13 @@ hn-release-hook-preflight-manual
    # bump versions in the repo
    version = ''
 hn-release-hook-version-readme
+hn-release-hook-version-rust
+sim1h-release-hook-version
 '';
 
    # publish artifacts to the world
    publish = ''
-echo "All finished!!!"
+sim1h-release-hook-publish
 '';
   };
 
@@ -90,7 +92,7 @@ See:
    owner = "holochain";
 
    # repository name on github that release are deployed to
-   repo = "holonix";
+   repo = "sim2h";
 
    # canonical local upstream name as per `git remote -v`
    upstream = "origin";
