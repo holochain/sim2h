@@ -63,11 +63,10 @@ impl AspectList {
     }
 
     pub fn add(&mut self, entry_address: Address, aspect_address: Address) {
-        if !self.0.contains_key(&entry_address) {
-            self.0.insert(entry_address, vec![aspect_address]);
-        } else {
-            self.0.get_mut(&entry_address).unwrap().push(aspect_address);
-        }
+        self.0
+            .entry(entry_address)
+            .or_insert_with(Vec::new)
+            .push(aspect_address);
     }
 
     pub fn entry_addresses(&self) -> impl Iterator<Item = &Address> {

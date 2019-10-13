@@ -5,6 +5,7 @@ pub type AgentId = Address;
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum ConnectionState {
+    #[allow(clippy::all)]
     Limbo(Box<Vec<WireMessage>>),
     Joined(SpaceHash, AgentId),
 }

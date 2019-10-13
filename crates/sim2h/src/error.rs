@@ -11,7 +11,7 @@ impl From<GhostError> for Sim2hError {
 }
 impl From<&str> for Sim2hError {
     fn from(err: &str) -> Self {
-        Sim2hError(format!("{}", err))
+        Sim2hError(err.to_string())
     }
 }
 impl From<String> for Sim2hError {
