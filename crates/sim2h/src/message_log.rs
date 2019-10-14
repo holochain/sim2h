@@ -6,6 +6,7 @@ use std::collections::LinkedList;
 use std::fs::OpenOptions;
 use std::io::Write;
 use log::error;
+use chrono::{DateTime, Utc};
 
 #[derive(Serialize)]
 enum Direction {
@@ -15,6 +16,7 @@ enum Direction {
 
 #[derive(Serialize)]
 struct MessageLog {
+    time: String,
     uri: Lib3hUri,
     agent: Address,
     direction: Direction,
@@ -67,8 +69,14 @@ impl MessageLogger {
         }).expect("Could not spaw logger thread");
     }
 
+    fn time() -> String {
+        let now: DateTime<Utc> = Utc::now();
+        format!("{}", now)
+    }
+
     pub fn log_in(&mut self, agent: Address, uri: Lib3hUri, message: WireMessage) {
         self.buffer.push_back(MessageLog {
+            time: Self::time(),
             uri,
             agent,
             direction: Direction::In,
@@ -78,6 +86,7 @@ impl MessageLogger {
 
     pub fn log_out(&mut self, agent: Address, uri: Lib3hUri, message: WireMessage) {
         self.buffer.push_back(MessageLog {
+            time: Self::time(),
             uri,
             agent,
             direction: Direction::Out,
