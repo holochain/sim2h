@@ -46,6 +46,7 @@ impl MessageLogger {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 if let Ok(mut file) = OpenOptions::new()
+                    .create(true)
                     .append(true)
                     .open("sim2h_message_log.txt")
                 {
