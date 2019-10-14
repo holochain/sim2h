@@ -32,6 +32,17 @@ with holonix.pkgs;
     pkgs = holonix.pkgs;
    }).buildInputs
 
+   # release hooks
+   ++ (holonix.pkgs.callPackage ./nix/release {
+     pkgs = holonix.pkgs;
+     config = config;
+   }).buildInputs
+
+   # test script
+   ++ (holonix.pkgs.callPackage ./nix/test {
+     pkgs = holonix.pkgs;
+   }).buildInputs
+
   ;
  });
 }

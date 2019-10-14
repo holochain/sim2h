@@ -286,10 +286,7 @@ impl Sim2h {
             return Err(VERIFY_FAILED_ERR_STR.into());
         }
         let wire_message = WireMessage::try_from(signed_message.payload)?;
-        Ok((
-            Address::from(signed_message.provenance.source()),
-            wire_message,
-        ))
+        Ok((signed_message.provenance.source(), wire_message))
     }
 
     // process transport and  incoming messages from it
@@ -515,7 +512,7 @@ impl Sim2h {
                     return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
                 debug!("HANDLE FETCH ENTRY RESULT: {:?}", fetch_result);
-                if fetch_result.request_id == String::from("") {
+                if fetch_result.request_id == "" {
                     debug!("Got FetchEntry result form {} without request id - must be from authoring list", agent_id);
                     self.handle_new_entry_data(fetch_result.entry, space_address.clone(), agent_id.clone());
                 } else {

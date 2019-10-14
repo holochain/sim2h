@@ -8,7 +8,7 @@ jobs:
 
    - run:
       name: run the tests
-      command: nix-shell --run 'cargo test'
+      command: nix-shell --run sim2h-test
 
 workflows:
  version: 2
