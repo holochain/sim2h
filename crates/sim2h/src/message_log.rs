@@ -1,8 +1,8 @@
 use crate::WireMessage;
-use std::collections::LinkedList;
 use lib3h_protocol::uri::Lib3hUri;
 use lib3h_protocol::Address;
 use parking_lot::Mutex;
+use std::collections::LinkedList;
 
 #[derive(Serialize)]
 enum Direction {
@@ -15,7 +15,7 @@ struct MessageLog {
     uri: Lib3hUri,
     agent: Address,
     direction: Direction,
-    message: WireMessage
+    message: WireMessage,
 }
 
 lazy_static! {
