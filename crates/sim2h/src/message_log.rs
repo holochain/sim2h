@@ -8,7 +8,7 @@ use std::io::Write;
 use log::error;
 use chrono::{DateTime, Utc};
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 enum Direction {
     In,
     Out,
@@ -59,10 +59,17 @@ impl MessageLogger {
                         .into_iter()
                         //.drain_filter(|_| true)
                         .map(|log| {
-                            serde_json::to_string(&log).expect("MessageLogs must be serializable")
+                            format!(
+                                "{}\t{:?}\t{}\t{}\t{}",
+                                log.time,
+                                log.direction,
+                                log.agent,
+                                log.uri,
+                                serde_json::to_string(&log.message).expect("Message must be serializable")
+                            )
                         })
                         .collect::<Vec<String>>()
-                        .join(",\n");
+                        .join("\n");
                     if let Err(e) = file.write(to_append.as_bytes()) {
                         error!("Error writing log file: {:?}", e);
                     }

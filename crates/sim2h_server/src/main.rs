@@ -23,7 +23,7 @@ struct Cli {
     #[structopt(
         long,
         short,
-        help = "File to log all incoming and outgoing messages to",
+        help = "CSV file to log all incoming and outgoing messages to",
         default_value = "sim2h_messages.log"
     )]
     message_log_file: String,
