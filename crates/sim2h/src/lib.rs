@@ -933,24 +933,18 @@ pub mod tests {
         let _ = sim2h.join(&to_uri, &to_agent_data);
 
         let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
-        assert_eq!(
-            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(HandleSendDirectMessage(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz\"), from_agent_id: HashString(\"HcSCinKU7Nqnf8n4ixOaaHzxdwg8x94t67rESVyCR9yo8csrQRcZGXT6q4ahmwr\"), content: \"foo\" })))))",
-            format!("{:?}", result)
-        );
+        assert_eq!(Ok(()), result);
 
         // proxy a dm message response
         // for this test we just pretend the same agent set up above is making a response
         let message = make_test_dm_message_response_with(make_test_dm_data());
         let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
-        assert_eq!(
-            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(SendDirectMessageResult(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz\"), from_agent_id: HashString(\"HcSCinKU7Nqnf8n4ixOaaHzxdwg8x94t67rESVyCR9yo8csrQRcZGXT6q4ahmwr\"), content: \"foo\" })))))",
-                format!("{:?}", result)
-        );
+        assert_eq!(Ok(()), result);
 
         // proxy a leave space message should remove the agent from the space
         let message = make_test_leave_message();
         let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
-        assert_eq!("Ok(None)", format!("{:?}", result));
+        assert_eq!(Ok(()), result);
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(result, None);
     }
