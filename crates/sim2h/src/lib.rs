@@ -15,11 +15,11 @@ pub mod error;
 mod message_log;
 pub mod wire_message;
 
-use crate::{crypto::*, error::*, message_log::*};
+use crate::{crypto::*, error::*};
 use cache::*;
 use connection_state::*;
 pub use wire_message::{WireError, WireMessage};
-
+pub use crate::message_log::MESSAGE_LOGGER;
 use detach::prelude::*;
 use holochain_tracing::Span;
 use lib3h::transport::protocol::*;

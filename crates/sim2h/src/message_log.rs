@@ -32,12 +32,14 @@ lazy_static! {
 
 pub struct MessageLogger {
     buffer: LinkedList<MessageLog>,
+    file_path: String,
 }
 
 impl MessageLogger {
     pub fn new() -> Self {
         MessageLogger {
             buffer: LinkedList::new(),
+            file_path: String::from("sim2h_messages.log")
         }
     }
 
@@ -45,12 +47,13 @@ impl MessageLogger {
         std::thread::Builder::new().name("MessageLogger".into()).spawn(|| {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
+                let mut logger = MESSAGE_LOGGER.lock();
                 if let Ok(mut file) = OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open("sim2h_message_log.txt")
+                    .open(logger.file_path())
                 {
-                    let to_append = MESSAGE_LOGGER.lock()
+                    let to_append = logger
                         .buffer
                         .split_off(0)
                         .into_iter()
@@ -93,5 +96,13 @@ impl MessageLogger {
             direction: Direction::Out,
             message,
         });
+    }
+
+    pub fn set_logfile<T: Into<String>>(&mut self, path: T) {
+        self.file_path = path.into();
+    }
+
+    pub fn file_path(&self) -> String {
+        self.file_path.clone()
     }
 }

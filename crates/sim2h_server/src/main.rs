@@ -7,7 +7,7 @@ use lib3h::transport::{
 };
 use lib3h_protocol::{uri::Builder, Address};
 use log::error;
-use sim2h::Sim2h;
+use sim2h::{MESSAGE_LOGGER, Sim2h};
 use std::process::exit;
 use structopt::StructOpt;
 
@@ -20,6 +20,13 @@ struct Cli {
         default_value = "9000"
     )]
     port: u16,
+    #[structopt(
+        long,
+        short,
+        help = "File to log all incoming and outgoing messages to",
+        default_value = "sim2h_messages.log"
+    )]
+    message_log_file: String,
 }
 
 fn create_websocket_transport() -> DynTransportActor {
@@ -41,6 +48,7 @@ fn main() {
         .unwrap_or_else(|e| panic!("with_raw_url: {:?}", e))
         .with_port(args.port)
         .build();
+    MESSAGE_LOGGER.lock().set_logfile(args.message_log_file);
     let mut sim2h = Sim2h::new(transport, uri);
 
     loop {
