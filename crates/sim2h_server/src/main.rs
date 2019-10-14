@@ -7,7 +7,7 @@ use lib3h::transport::{
 };
 use lib3h_protocol::{uri::Builder, Address};
 use log::error;
-use sim2h::{MESSAGE_LOGGER, Sim2h};
+use sim2h::{Sim2h, MESSAGE_LOGGER};
 use std::process::exit;
 use structopt::StructOpt;
 

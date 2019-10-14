@@ -15,11 +15,10 @@ pub mod error;
 mod message_log;
 pub mod wire_message;
 
+pub use crate::message_log::MESSAGE_LOGGER;
 use crate::{crypto::*, error::*};
 use cache::*;
 use connection_state::*;
-pub use wire_message::{WireError, WireMessage};
-pub use crate::message_log::MESSAGE_LOGGER;
 use detach::prelude::*;
 use holochain_tracing::Span;
 use lib3h::transport::protocol::*;
@@ -31,6 +30,7 @@ use lib3h_protocol::{
     Address,
 };
 use lib3h_zombie_actor::prelude::*;
+pub use wire_message::{WireError, WireMessage};
 
 use log::*;
 use parking_lot::RwLock;
