@@ -10,6 +10,7 @@ use log::error;
 use sim2h::{Sim2h, MESSAGE_LOGGER};
 use std::process::exit;
 use structopt::StructOpt;
+use std::path::PathBuf;
 
 #[derive(StructOpt)]
 struct Cli {
@@ -24,9 +25,8 @@ struct Cli {
         long,
         short,
         help = "CSV file to log all incoming and outgoing messages to",
-        default_value = "sim2h_messages.log"
     )]
-    message_log_file: String,
+    message_log_file: Option<PathBuf>,
 }
 
 fn create_websocket_transport() -> DynTransportActor {
@@ -48,7 +48,11 @@ fn main() {
         .unwrap_or_else(|e| panic!("with_raw_url: {:?}", e))
         .with_port(args.port)
         .build();
-    MESSAGE_LOGGER.lock().set_logfile(args.message_log_file);
+    if let Some(message_log_file) = args.message_log_file {
+        MESSAGE_LOGGER.lock().set_logfile(message_log_file);
+        MESSAGE_LOGGER.lock().start();
+    }
+
     let mut sim2h = Sim2h::new(transport, uri);
 
     loop {

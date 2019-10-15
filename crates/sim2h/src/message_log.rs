@@ -7,6 +7,7 @@ use parking_lot::Mutex;
 use std::collections::LinkedList;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
 
 #[derive(Serialize, Debug)]
 enum Direction {
@@ -24,23 +25,37 @@ struct MessageLog {
 }
 
 lazy_static! {
-    pub static ref MESSAGE_LOGGER: Mutex<MessageLogger> = {
-        MessageLogger::write_thread();
-        Mutex::new(MessageLogger::new())
-    };
+    pub static ref MESSAGE_LOGGER: Mutex<MessageLogger> = Mutex::new(MessageLogger::new());
 }
 
 pub struct MessageLogger {
     buffer: LinkedList<MessageLog>,
-    file_path: String,
+    file_path: PathBuf,
+    running: bool,
 }
 
 impl MessageLogger {
     pub fn new() -> Self {
         MessageLogger {
             buffer: LinkedList::new(),
-            file_path: String::from("sim2h_messages.log"),
+            file_path: PathBuf::from("sim2h_messages.log"),
+            running: false,
         }
+    }
+
+    pub fn start(&mut self) {
+        if !self.running {
+            self.running = true;
+            Self::write_thread()
+        }
+    }
+
+    pub fn stop(&mut self) {
+        self.running = false;
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running
     }
 
     fn write_thread() {
@@ -50,6 +65,9 @@ impl MessageLogger {
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     let mut logger = MESSAGE_LOGGER.lock();
+                    if !logger.is_running() {
+                        return
+                    }
                     if let Ok(mut file) = OpenOptions::new()
                         .create(true)
                         .append(true)
@@ -90,30 +108,34 @@ impl MessageLogger {
     }
 
     pub fn log_in(&mut self, agent: Address, uri: Lib3hUri, message: WireMessage) {
-        self.buffer.push_back(MessageLog {
-            time: Self::time(),
-            uri,
-            agent,
-            direction: Direction::In,
-            message,
-        });
+        if self.running {
+            self.buffer.push_back(MessageLog {
+                time: Self::time(),
+                uri,
+                agent,
+                direction: Direction::In,
+                message,
+            });
+        }
     }
 
     pub fn log_out(&mut self, agent: Address, uri: Lib3hUri, message: WireMessage) {
-        self.buffer.push_back(MessageLog {
-            time: Self::time(),
-            uri,
-            agent,
-            direction: Direction::Out,
-            message,
-        });
+        if self.running {
+            self.buffer.push_back(MessageLog {
+                time: Self::time(),
+                uri,
+                agent,
+                direction: Direction::Out,
+                message,
+            });
+        }
     }
 
-    pub fn set_logfile<T: Into<String>>(&mut self, path: T) {
-        self.file_path = path.into();
+    pub fn set_logfile(&mut self, path: PathBuf) {
+        self.file_path = path;
     }
 
-    pub fn file_path(&self) -> String {
+    pub fn file_path(&self) -> PathBuf {
         self.file_path.clone()
     }
 }
