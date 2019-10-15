@@ -12,13 +12,13 @@ pub mod cache;
 pub mod connection_state;
 pub mod crypto;
 pub mod error;
+mod message_log;
 pub mod wire_message;
 
+pub use crate::message_log::MESSAGE_LOGGER;
 use crate::{crypto::*, error::*};
 use cache::*;
 use connection_state::*;
-pub use wire_message::{WireError, WireMessage};
-
 use detach::prelude::*;
 use holochain_tracing::Span;
 use lib3h::transport::protocol::*;
@@ -30,6 +30,7 @@ use lib3h_protocol::{
     Address,
 };
 use lib3h_zombie_actor::prelude::*;
+pub use wire_message::{WireError, WireMessage};
 
 use log::*;
 use parking_lot::RwLock;
@@ -88,9 +89,9 @@ impl Sim2h {
             WireMessage::Lib3hToClient(Lib3hToClient::HandleGetAuthoringEntryList(GetListData {
                 request_id: "".into(),
                 space_address,
-                provider_agent_id,
+                provider_agent_id: provider_agent_id.clone(),
             }));
-        self.send(uri, &wire_message);
+        self.send(provider_agent_id, uri, &wire_message);
     }
 
     fn request_gossiping_list(
@@ -103,9 +104,9 @@ impl Sim2h {
             WireMessage::Lib3hToClient(Lib3hToClient::HandleGetGossipingEntryList(GetListData {
                 request_id: "".into(),
                 space_address,
-                provider_agent_id,
+                provider_agent_id: provider_agent_id.clone(),
             }));
-        self.send(uri, &wire_message);
+        self.send(provider_agent_id, uri, &wire_message);
     }
 
     // adds an agent to a space
@@ -225,15 +226,18 @@ impl Sim2h {
         message: WireMessage,
         signer: &AgentId,
     ) -> Sim2hResult<()> {
+        MESSAGE_LOGGER
+            .lock()
+            .log_in(signer.clone(), uri.clone(), message.clone());
         trace!("handle_message entered");
         let mut agent = self
             .get_connection(uri)
             .ok_or_else(|| format!("no connection for {}", uri))?;
         // TODO: anyway, but especially with this Ping/Pong, mitigate DoS attacks.
         if message == WireMessage::Ping {
-            self.send(uri.clone(), &WireMessage::Pong);
+            self.send(signer.clone(), uri.clone(), &WireMessage::Pong);
         }
-        let result = match agent {
+        match agent {
             // if the agent sending the message is in limbo, then the only message
             // allowed is a join message.
             ConnectionState::Limbo(ref mut pending_messages) => {
@@ -248,6 +252,7 @@ impl Sim2h {
                     pending_messages.push(message);
                     let _ = self.connection_states.write().insert(uri.clone(), agent);
                     self.send(
+                        signer.clone(),
                         uri.clone(),
                         &WireMessage::Err(WireError::MessageWhileInLimbo),
                     );
@@ -261,22 +266,9 @@ impl Sim2h {
                 if &agent_id != signer {
                     return Err(SIGNER_MISMATCH_ERR_STR.into());
                 }
-                if let Some((is_request, to_uri, message)) =
-                    self.prepare_proxy(uri, &space_address, &agent_id, message)?
-                {
-                    if is_request {
-                        self.send(to_uri, &message);
-                        Ok(())
-                    } else {
-                        unimplemented!()
-                    }
-                } else {
-                    Ok(())
-                }
+                self.handle_joined(uri, &space_address, &agent_id, message)
             }
-        };
-        trace!("handle_message done");
-        result
+        }
     }
 
     fn verify_payload(payload: Opaque) -> Sim2hResult<(AgentId, WireMessage)> {
@@ -344,20 +336,20 @@ impl Sim2h {
     }
 
     // given an incoming messages, prepare a proxy message and whether it's an publish or request
-    fn prepare_proxy(
+    fn handle_joined(
         &mut self,
         uri: &Lib3hUri,
         space_address: &SpaceHash,
         agent_id: &AgentId,
         message: WireMessage,
-    ) -> Sim2hResult<Option<(bool, Lib3hUri, WireMessage)>> {
-        trace!("prepare_proxy entered");
+    ) -> Sim2hResult<()> {
+        trace!("handle_joined entered");
         debug!(
             "<<IN<< {} from {}",
             message.message_type(),
             agent_id.to_string()
         );
-        let result = match message {
+        match message {
             // First make sure we are not receiving a message in the wrong direction.
             // Panic for now so we can easily spot a mistake.
             // Should maybe break up WireMessage into two different structs so we get the
@@ -369,7 +361,7 @@ impl Sim2h {
                 Err("join message should have been processed elsewhere and can't be proxied".into())
             }
             WireMessage::ClientToLib3h(ClientToLib3h::LeaveSpace(data)) => {
-                self.leave(uri, &data).map(|_| None)
+                self.leave(uri, &data)
             }
 
             // -- Direct Messaging -- //
@@ -382,11 +374,12 @@ impl Sim2h {
                 let to_url = self
                     .lookup_joined(space_address, &dm_data.to_agent_id)
                     .ok_or_else(|| format!("unvalidated proxy agent {}", &dm_data.to_agent_id))?;
-                Ok(Some((
-                    true,
+                self.send(
+                    dm_data.to_agent_id.clone(),
                     to_url,
-                    WireMessage::Lib3hToClient(Lib3hToClient::HandleSendDirectMessage(dm_data)),
-                )))
+                    &WireMessage::Lib3hToClient(Lib3hToClient::HandleSendDirectMessage(dm_data))
+                );
+                Ok(())
             }
             // Direct message response
             WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleSendDirectMessageResult(
@@ -399,18 +392,19 @@ impl Sim2h {
                 let to_url = self
                     .lookup_joined(space_address, &dm_data.to_agent_id)
                     .ok_or_else(|| format!("unvalidated proxy agent {}", &dm_data.to_agent_id))?;
-                Ok(Some((
-                    true,
+                self.send(
+                    dm_data.to_agent_id.clone(),
                     to_url,
-                    WireMessage::Lib3hToClient(Lib3hToClient::SendDirectMessageResult(dm_data)),
-                )))
+                    &WireMessage::Lib3hToClient(Lib3hToClient::SendDirectMessageResult(dm_data))
+                );
+                Ok(())
             }
             WireMessage::ClientToLib3h(ClientToLib3h::PublishEntry(data)) => {
                 if (data.provider_agent_id != *agent_id) || (data.space_address != *space_address) {
                     return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
                 self.handle_new_entry_data(data.entry, space_address.clone(), agent_id.clone());
-                Ok(None)
+                Ok(())
             }
             WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetAuthoringEntryListResult(list_data)) => {
                 debug!("GOT AUTHORING LIST from {}", agent_id);
@@ -436,10 +430,10 @@ impl Sim2h {
                                 aspect_address_list: Some(aspect_address_list.clone())
                             })
                         );
-                        self.send(uri.clone(), &wire_message);
+                        self.send(agent_id.clone(), uri.clone(), &wire_message);
                     }
                 }
-                Ok(None)
+                Ok(())
             }
             WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetGossipingEntryListResult(list_data)) => {
                 debug!("GOT GOSSIPING LIST from {}", agent_id);
@@ -484,7 +478,7 @@ impl Sim2h {
                     let maybe_url = self.lookup_joined(space_address, random_agent);
                     if maybe_url.is_none() {
                         error!("Could not find URL for randomly selected agent. This should not happen!");
-                        return Ok(None)
+                        return Ok(())
                     }
                     let random_url = maybe_url.unwrap();
 
@@ -500,11 +494,11 @@ impl Sim2h {
                                 })
                             );
                             debug!("SENDING FeTCH with ReQUest ID: {:?}", wire_message);
-                            self.send(random_url.clone(), &wire_message);
+                            self.send(random_agent.clone(), random_url.clone(), &wire_message);
                         }
                     }
                 }
-                Ok(None)
+                Ok(())
             }
             WireMessage::Lib3hToClientResponse(
                 Lib3hToClientResponse::HandleFetchEntryResult(fetch_result)) => {
@@ -521,7 +515,7 @@ impl Sim2h {
                     let maybe_url = self.lookup_joined(space_address, &to_agent_id);;
                     if maybe_url.is_none() {
                         error!("Got FetchEntryResult with request id that is not a known agent id. My hack didn't work?");
-                        return Ok(None)
+                        return Ok(())
                     }
                     let url = maybe_url.unwrap();
                     for aspect in fetch_result.entry.aspect_list {
@@ -534,19 +528,17 @@ impl Sim2h {
                                 entry_aspect: aspect,
                             },
                         ));
-                        self.send(url.clone(), &store_message);
+                        self.send(to_agent_id.clone(), url.clone(), &store_message);
                     }
                 }
 
-                Ok(None)
+                Ok(())
             }
             _ => {
                 warn!("Ignoring unimplemented message: {:?}", message );
                 Err(format!("Message not implemented: {:?}", message).into())
             }
-        };
-        trace!("prepare_proxy done");
-        result
+        }
     }
 
     fn handle_new_entry_data(
@@ -609,7 +601,7 @@ impl Sim2h {
         except: Option<&AgentId>,
     ) -> Sim2hResult<()> {
         debug!("Broadcast in space: {:?}", space);
-        let all_uris = self
+        let all_agents = self
             .spaces
             .get(&space)
             .ok_or("No such space")?
@@ -624,19 +616,19 @@ impl Sim2h {
                     true
                 }
             })
-            .collect::<HashMap<AgentId, Lib3hUri>>()
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for uri in all_uris {
+            .collect::<Vec<(AgentId, Lib3hUri)>>();
+        for (agent, uri) in all_agents {
             debug!("Broadcast: Sending to {:?}", uri);
-            self.send(uri, msg);
+            self.send(agent, uri, msg);
         }
         Ok(())
     }
 
-    fn send(&mut self, uri: Lib3hUri, msg: &WireMessage) {
+    fn send(&mut self, agent: AgentId, uri: Lib3hUri, msg: &WireMessage) {
         debug!(">>OUT>> {} to {}", msg.message_type(), uri);
+        MESSAGE_LOGGER
+            .lock()
+            .log_out(agent, uri.clone(), msg.clone());
         let payload: Opaque = msg.clone().into();
         let send_result = self.transport.request(
             Span::fixme(),
@@ -900,7 +892,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn test_prepare_proxy() {
+    pub fn test_handle_joined() {
         let mut sim2h = make_test_sim2h_nonet();
 
         let uri = Lib3hUri::with_memory("addr_1");
@@ -910,13 +902,13 @@ pub mod tests {
         let data = make_test_space_data();
 
         // you can't proxy a join message
-        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
+        let result = sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message);
         assert!(result.is_err());
 
         // you can't proxy for someone else, i.e. the message contents must match the
         // space joined
         let message = make_test_dm_message();
-        let result = sim2h.prepare_proxy(
+        let result = sim2h.handle_joined(
             &uri,
             &data.space_address,
             &"fake_other_agent".into(),
@@ -927,7 +919,7 @@ pub mod tests {
         // you can't proxy to someone not in the space
         let message = make_test_dm_message();
         let result =
-            sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message.clone());
+            sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message.clone());
         assert_eq!(
             Err("unvalidated proxy agent HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz".into()),
             result,
@@ -940,25 +932,19 @@ pub mod tests {
         let _ = sim2h.handle_incoming_connect(to_uri.clone());
         let _ = sim2h.join(&to_uri, &to_agent_data);
 
-        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
-        assert_eq!(
-            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(HandleSendDirectMessage(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz\"), from_agent_id: HashString(\"HcSCinKU7Nqnf8n4ixOaaHzxdwg8x94t67rESVyCR9yo8csrQRcZGXT6q4ahmwr\"), content: \"foo\" })))))",
-            format!("{:?}", result)
-        );
+        let result = sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message);
+        assert_eq!(Ok(()), result);
 
         // proxy a dm message response
         // for this test we just pretend the same agent set up above is making a response
         let message = make_test_dm_message_response_with(make_test_dm_data());
-        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
-        assert_eq!(
-            "Ok(Some((true, Lib3hUri(\"mem://addr_2/\"), Lib3hToClient(SendDirectMessageResult(DirectMessageData { space_address: SpaceHash(HashString(\"fake_space_address\")), request_id: \"\", to_agent_id: HashString(\"HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz\"), from_agent_id: HashString(\"HcSCinKU7Nqnf8n4ixOaaHzxdwg8x94t67rESVyCR9yo8csrQRcZGXT6q4ahmwr\"), content: \"foo\" })))))",
-                format!("{:?}", result)
-        );
+        let result = sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message);
+        assert_eq!(Ok(()), result);
 
         // proxy a leave space message should remove the agent from the space
         let message = make_test_leave_message();
-        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
-        assert_eq!("Ok(None)", format!("{:?}", result));
+        let result = sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message);
+        assert_eq!(Ok(()), result);
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(result, None);
     }
