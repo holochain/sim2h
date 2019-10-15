@@ -266,7 +266,7 @@ impl Sim2h {
                 if &agent_id != signer {
                     return Err(SIGNER_MISMATCH_ERR_STR.into());
                 }
-                self.prepare_proxy(uri, &space_address, &agent_id, message)
+                self.handle_joined(uri, &space_address, &agent_id, message)
             }
         }
     }
@@ -336,14 +336,14 @@ impl Sim2h {
     }
 
     // given an incoming messages, prepare a proxy message and whether it's an publish or request
-    fn prepare_proxy(
+    fn handle_joined(
         &mut self,
         uri: &Lib3hUri,
         space_address: &SpaceHash,
         agent_id: &AgentId,
         message: WireMessage,
     ) -> Sim2hResult<()> {
-        trace!("prepare_proxy entered");
+        trace!("handle_joined entered");
         debug!(
             "<<IN<< {} from {}",
             message.message_type(),
@@ -892,7 +892,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn test_prepare_proxy() {
+    pub fn test_handle_joined() {
         let mut sim2h = make_test_sim2h_nonet();
 
         let uri = Lib3hUri::with_memory("addr_1");
@@ -902,13 +902,13 @@ pub mod tests {
         let data = make_test_space_data();
 
         // you can't proxy a join message
-        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
+        let result = sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message);
         assert!(result.is_err());
 
         // you can't proxy for someone else, i.e. the message contents must match the
         // space joined
         let message = make_test_dm_message();
-        let result = sim2h.prepare_proxy(
+        let result = sim2h.handle_joined(
             &uri,
             &data.space_address,
             &"fake_other_agent".into(),
@@ -919,7 +919,7 @@ pub mod tests {
         // you can't proxy to someone not in the space
         let message = make_test_dm_message();
         let result =
-            sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message.clone());
+            sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message.clone());
         assert_eq!(
             Err("unvalidated proxy agent HcScixBBK8UOmkf4uvs4AI8974NEQtTzgtT7SstuVrvnizo6uWuPTpRVbiexarz".into()),
             result,
@@ -932,18 +932,18 @@ pub mod tests {
         let _ = sim2h.handle_incoming_connect(to_uri.clone());
         let _ = sim2h.join(&to_uri, &to_agent_data);
 
-        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
+        let result = sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message);
         assert_eq!(Ok(()), result);
 
         // proxy a dm message response
         // for this test we just pretend the same agent set up above is making a response
         let message = make_test_dm_message_response_with(make_test_dm_data());
-        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
+        let result = sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message);
         assert_eq!(Ok(()), result);
 
         // proxy a leave space message should remove the agent from the space
         let message = make_test_leave_message();
-        let result = sim2h.prepare_proxy(&uri, &data.space_address, &data.agent_id, message);
+        let result = sim2h.handle_joined(&uri, &data.space_address, &data.agent_id, message);
         assert_eq!(Ok(()), result);
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(result, None);
