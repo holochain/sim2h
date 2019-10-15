@@ -8,9 +8,9 @@ use lib3h::transport::{
 use lib3h_protocol::{uri::Builder, Address};
 use log::error;
 use sim2h::{Sim2h, MESSAGE_LOGGER};
+use std::path::PathBuf;
 use std::process::exit;
 use structopt::StructOpt;
-use std::path::PathBuf;
 
 #[derive(StructOpt)]
 struct Cli {
@@ -24,7 +24,7 @@ struct Cli {
     #[structopt(
         long,
         short,
-        help = "CSV file to log all incoming and outgoing messages to",
+        help = "CSV file to log all incoming and outgoing messages to"
     )]
     message_log_file: Option<PathBuf>,
 }
