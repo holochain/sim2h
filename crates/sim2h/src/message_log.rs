@@ -93,7 +93,7 @@ impl MessageLogger {
                     error!("Could not open log file!")
                 }
             })
-            .expect("Could not spaw logger thread");
+            .expect("Could not spawn logger thread");
     }
 
     /// Serializes a `MessageLog` item to a line that gets added to the log file.
