@@ -285,8 +285,7 @@ impl Sim2h {
     pub fn process(&mut self) -> Sim2hResult<()> {
         trace!("process");
         self.num_ticks += 1;
-        if self.num_ticks % 2000 == 0 {
-            //std::io::stdout().flush()?;
+        if self.num_ticks % 60000 == 0 {
             debug!(".");
             self.num_ticks = 0;
         }
