@@ -68,31 +68,29 @@ impl MessageLogger {
     fn write_thread() {
         std::thread::Builder::new()
             .name("MessageLogger".into())
-            .spawn(|| {
-                loop {
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    let mut logger = MESSAGE_LOGGER.lock();
-                    if !logger.is_running() {
-                        return
+            .spawn(|| loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let mut logger = MESSAGE_LOGGER.lock();
+                if !logger.is_running() {
+                    return;
+                }
+                if let Ok(mut file) = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(logger.file_path())
+                {
+                    let to_append = logger
+                        .buffer
+                        .split_off(0)
+                        .into_iter()
+                        .map(|log| Self::log_to_line(&log))
+                        .collect::<Vec<String>>()
+                        .join("\n");
+                    if let Err(e) = file.write(to_append.as_bytes()) {
+                        error!("Error writing log file: {:?}", e);
                     }
-                    if let Ok(mut file) = OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(logger.file_path())
-                    {
-                        let to_append = logger
-                            .buffer
-                            .split_off(0)
-                            .into_iter()
-                            .map(|log| Self::log_to_line(&log))
-                            .collect::<Vec<String>>()
-                            .join("\n");
-                        if let Err(e) = file.write(to_append.as_bytes()) {
-                            error!("Error writing log file: {:?}", e);
-                        }
-                    } else {
-                        error!("Could not open log file!")
-                    }
+                } else {
+                    error!("Could not open log file!")
                 }
             })
             .expect("Could not spaw logger thread");
@@ -107,8 +105,7 @@ impl MessageLogger {
             log.direction,
             log.agent,
             log.uri,
-            serde_json::to_string(&log.message)
-                .expect("Message must be serializable")
+            serde_json::to_string(&log.message).expect("Message must be serializable")
         )
     }
 
