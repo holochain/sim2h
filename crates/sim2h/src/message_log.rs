@@ -28,6 +28,10 @@ lazy_static! {
     pub static ref MESSAGE_LOGGER: Mutex<MessageLogger> = Mutex::new(MessageLogger::new());
 }
 
+/// Logger for wire messages with a buffer.
+/// Each call to `log_in` and `log_out` will just add a `MessageLog` instance to the buffer.
+/// `write_thread()` starts a thread that clears the buffer and writes new lines to the log file
+/// once every second.
 pub struct MessageLogger {
     buffer: LinkedList<MessageLog>,
     file_path: PathBuf,
@@ -58,6 +62,9 @@ impl MessageLogger {
         self.running
     }
 
+    /// The thread started by this function is doing the actual work of taking all items
+    /// from the buffer and adding lines to the log file.
+    /// Stops if Self::running was set to false.
     fn write_thread() {
         std::thread::Builder::new()
             .name("MessageLogger".into())
@@ -77,18 +84,7 @@ impl MessageLogger {
                             .buffer
                             .split_off(0)
                             .into_iter()
-                            //.drain_filter(|_| true)
-                            .map(|log| {
-                                format!(
-                                    "{}\t{:?}\t{}\t{}\t{}",
-                                    log.time,
-                                    log.direction,
-                                    log.agent,
-                                    log.uri,
-                                    serde_json::to_string(&log.message)
-                                        .expect("Message must be serializable")
-                                )
-                            })
+                            .map(|log| Self::log_to_line(&log))
                             .collect::<Vec<String>>()
                             .join("\n");
                         if let Err(e) = file.write(to_append.as_bytes()) {
@@ -100,6 +96,20 @@ impl MessageLogger {
                 }
             })
             .expect("Could not spaw logger thread");
+    }
+
+    /// Serializes a `MessageLog` item to a line that gets added to the log file.
+    /// Creates a tab-separated concatenation of the logs elements.
+    fn log_to_line(log: &MessageLog) -> String {
+        format!(
+            "{}\t{:?}\t{}\t{}\t{}",
+            log.time,
+            log.direction,
+            log.agent,
+            log.uri,
+            serde_json::to_string(&log.message)
+                .expect("Message must be serializable")
+        )
     }
 
     fn time() -> String {
