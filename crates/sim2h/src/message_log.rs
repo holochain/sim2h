@@ -1,7 +1,7 @@
 use crate::WireMessage;
 use chrono::{DateTime, Utc};
+use lib3h_protocol::types::AgentPubKey;
 use lib3h_protocol::uri::Lib3hUri;
-use lib3h_protocol::Address;
 use log::error;
 use parking_lot::Mutex;
 use std::collections::LinkedList;
@@ -19,7 +19,7 @@ enum Direction {
 struct MessageLog {
     time: String,
     uri: Lib3hUri,
-    agent: Address,
+    agent: AgentPubKey,
     direction: Direction,
     message: WireMessage,
 }
@@ -114,19 +114,19 @@ impl MessageLogger {
         format!("{}", now)
     }
 
-    pub fn log_in(&mut self, agent: Address, uri: Lib3hUri, message: WireMessage) {
+    pub fn log_in(&mut self, agent: AgentPubKey, uri: Lib3hUri, message: WireMessage) {
         if self.running {
             self.buffer.push_back(MessageLog {
                 time: Self::time(),
                 uri,
-                agent,
+                agent: agent.into(),
                 direction: Direction::In,
                 message,
             });
         }
     }
 
-    pub fn log_out(&mut self, agent: Address, uri: Lib3hUri, message: WireMessage) {
+    pub fn log_out(&mut self, agent: AgentPubKey, uri: Lib3hUri, message: WireMessage) {
         if self.running {
             self.buffer.push_back(MessageLog {
                 time: Self::time(),

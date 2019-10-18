@@ -89,7 +89,7 @@ impl Sim2h {
             WireMessage::Lib3hToClient(Lib3hToClient::HandleGetAuthoringEntryList(GetListData {
                 request_id: "".into(),
                 space_address,
-                provider_agent_id: provider_agent_id.clone(),
+                provider_agent_id: provider_agent_id.clone().into(),
             }));
         self.send(provider_agent_id, uri, &wire_message);
     }
@@ -104,7 +104,7 @@ impl Sim2h {
             WireMessage::Lib3hToClient(Lib3hToClient::HandleGetGossipingEntryList(GetListData {
                 request_id: "".into(),
                 space_address,
-                provider_agent_id: provider_agent_id.clone(),
+                provider_agent_id: provider_agent_id.clone().into(),
             }));
         self.send(provider_agent_id, uri, &wire_message);
     }
@@ -112,51 +112,52 @@ impl Sim2h {
     // adds an agent to a space
     fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
         trace!("join entered");
-        let result =
-            if let Some(ConnectionState::Limbo(pending_messages)) = self.get_connection(uri) {
-                let _ = self.connection_states.write().insert(
-                    uri.clone(),
-                    ConnectionState::Joined(data.space_address.clone(), data.agent_id.clone()),
+        let result = if let Some(ConnectionState::Limbo(pending_messages)) =
+            self.get_connection(uri)
+        {
+            let _ = self.connection_states.write().insert(
+                uri.clone(),
+                ConnectionState::Joined(data.space_address.clone(), data.agent_id.clone().into()),
+            );
+            if !self.spaces.contains_key(&data.space_address) {
+                self.spaces
+                    .insert(data.space_address.clone(), RwLock::new(Space::new()));
+                info!(
+                    "\n\n+++++++++++++++\nNew Space: {}\n+++++++++++++++\n",
+                    data.space_address
                 );
-                if !self.spaces.contains_key(&data.space_address) {
-                    self.spaces
-                        .insert(data.space_address.clone(), RwLock::new(Space::new()));
-                    info!(
-                        "\n\n+++++++++++++++\nNew Space: {}\n+++++++++++++++\n",
-                        data.space_address
+            }
+            self.spaces
+                .get(&data.space_address)
+                .unwrap()
+                .write()
+                .join_agent(data.agent_id.clone(), uri.clone());
+            info!(
+                "Agent {:?} joined space {:?}",
+                data.agent_id, data.space_address
+            );
+            self.request_authoring_list(
+                uri.clone(),
+                data.space_address.clone(),
+                data.agent_id.clone(),
+            );
+            self.request_gossiping_list(
+                uri.clone(),
+                data.space_address.clone(),
+                data.agent_id.clone(),
+            );
+            for message in *pending_messages {
+                if let Err(err) = self.handle_message(uri, message.clone(), &data.agent_id) {
+                    error!(
+                        "Error while handling limbo pending message {:?} for {}: {}",
+                        message, uri, err
                     );
                 }
-                self.spaces
-                    .get(&data.space_address)
-                    .unwrap()
-                    .write()
-                    .join_agent(data.agent_id.clone(), uri.clone());
-                info!(
-                    "Agent {:?} joined space {:?}",
-                    data.agent_id, data.space_address
-                );
-                self.request_authoring_list(
-                    uri.clone(),
-                    data.space_address.clone(),
-                    data.agent_id.clone(),
-                );
-                self.request_gossiping_list(
-                    uri.clone(),
-                    data.space_address.clone(),
-                    data.agent_id.clone(),
-                );
-                for message in *pending_messages {
-                    if let Err(err) = self.handle_message(uri, message.clone(), &data.agent_id) {
-                        error!(
-                            "Error while handling limbo pending message {:?} for {}: {}",
-                            message, uri, err
-                        );
-                    }
-                }
-                Ok(())
-            } else {
-                Err(format!("no agent found in limbo at {} ", uri).into())
-            };
+            }
+            Ok(())
+        } else {
+            Err(format!("no agent found in limbo at {} ", uri).into())
+        };
         trace!("join done");
         result
     }
@@ -278,7 +279,7 @@ impl Sim2h {
             return Err(VERIFY_FAILED_ERR_STR.into());
         }
         let wire_message = WireMessage::try_from(signed_message.payload)?;
-        Ok((signed_message.provenance.source(), wire_message))
+        Ok((signed_message.provenance.source().into(), wire_message))
     }
 
     // process transport and  incoming messages from it
@@ -403,7 +404,7 @@ impl Sim2h {
                 if (data.provider_agent_id != *agent_id) || (data.space_address != *space_address) {
                     return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
-                self.handle_new_entry_data(data.entry, space_address.clone(), agent_id.clone());
+                self.handle_new_entry_data(data.entry, space_address.clone(), agent_id.clone().into());
                 Ok(())
             }
             WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetAuthoringEntryListResult(list_data)) => {
@@ -554,7 +555,7 @@ impl Sim2h {
             .map(|aspect_data| aspect_data.aspect_address)
             .collect::<Vec<_>>();
         let mut map = HashMap::new();
-        map.insert(entry_data.entry_address.clone(), aspect_addresses);
+        map.insert(entry_data.entry_address.clone().into(), aspect_addresses);
         let aspect_list = AspectList::from(map);
         debug!("GOT NEW ASPECTS:\n{}", aspect_list.pretty_string());
 
@@ -567,8 +568,8 @@ impl Sim2h {
                     .expect("This function should not get called if we don't have this space")
                     .write();
                 space.add_aspect(
-                    entry_data.entry_address.clone(),
-                    aspect.aspect_address.clone(),
+                    entry_data.entry_address.clone().into(),
+                    aspect.aspect_address.clone().into(),
                 );
                 debug!(
                     "Space {} now knows about these aspects:\n{}",
@@ -582,7 +583,7 @@ impl Sim2h {
                 StoreEntryAspectData {
                     request_id: "".into(),
                     space_address: space_address.clone(),
-                    provider_agent_id: provider.clone(),
+                    provider_agent_id: provider.clone().into(),
                     entry_address: entry_data.entry_address.clone(),
                     entry_aspect: aspect,
                 },
