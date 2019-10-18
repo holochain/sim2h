@@ -226,6 +226,12 @@ impl Sim2h {
         message: WireMessage,
         signer: &AgentId,
     ) -> Sim2hResult<()> {
+        // TODO: anyway, but especially with this Ping/Pong, mitigate DoS attacks.
+        if message == WireMessage::Ping {
+            trace!("Ping -> Pong");
+            self.send(signer.clone(), uri.clone(), &WireMessage::Pong);
+            return Ok(())
+        }
         MESSAGE_LOGGER
             .lock()
             .log_in(signer.clone(), uri.clone(), message.clone());
@@ -233,10 +239,7 @@ impl Sim2h {
         let mut agent = self
             .get_connection(uri)
             .ok_or_else(|| format!("no connection for {}", uri))?;
-        // TODO: anyway, but especially with this Ping/Pong, mitigate DoS attacks.
-        if message == WireMessage::Ping {
-            self.send(signer.clone(), uri.clone(), &WireMessage::Pong);
-        }
+
         match agent {
             // if the agent sending the message is in limbo, then the only message
             // allowed is a join message.
@@ -624,10 +627,15 @@ impl Sim2h {
     }
 
     fn send(&mut self, agent: AgentId, uri: Lib3hUri, msg: &WireMessage) {
-        debug!(">>OUT>> {} to {}", msg.message_type(), uri);
-        MESSAGE_LOGGER
-            .lock()
-            .log_out(agent, uri.clone(), msg.clone());
+        match msg {
+            WireMessage::Ping | WireMessage::Pong => debug!("PingPong: {}", uri),
+            _ => {
+                debug!(">>OUT>> {} to {}", msg.message_type(), uri);
+                MESSAGE_LOGGER
+                    .lock()
+                    .log_out(agent, uri.clone(), msg.clone());
+            }
+        }
         let payload: Opaque = msg.clone().into();
         let send_result = self.transport.request(
             Span::fixme(),
@@ -645,7 +653,10 @@ impl Sim2h {
         if let Err(e) = send_result {
             error!("GhostError during broadcast send: {:?}", e)
         }
-        debug!("sent.");
+        match msg {
+            WireMessage::Ping | WireMessage::Pong => {},
+            _ => debug!("sent."),
+        }
     }
 }
 
