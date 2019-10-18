@@ -628,7 +628,7 @@ impl Sim2h {
 
     fn send(&mut self, agent: AgentId, uri: Lib3hUri, msg: &WireMessage) {
         match msg {
-            WireMessage::Ping | WireMessage::Pong => debug!("PingPong: {}", uri),
+            WireMessage::Ping | WireMessage::Pong => debug!("PingPong: {} at {}", agent, uri),
             _ => {
                 debug!(">>OUT>> {} to {}", msg.message_type(), uri);
                 MESSAGE_LOGGER
