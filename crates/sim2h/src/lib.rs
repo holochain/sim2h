@@ -230,7 +230,7 @@ impl Sim2h {
         if message == WireMessage::Ping {
             trace!("Ping -> Pong");
             self.send(signer.clone(), uri.clone(), &WireMessage::Pong);
-            return Ok(())
+            return Ok(());
         }
         MESSAGE_LOGGER
             .lock()
@@ -654,7 +654,7 @@ impl Sim2h {
             error!("GhostError during broadcast send: {:?}", e)
         }
         match msg {
-            WireMessage::Ping | WireMessage::Pong => {},
+            WireMessage::Ping | WireMessage::Pong => {}
             _ => debug!("sent."),
         }
     }
