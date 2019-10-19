@@ -5,7 +5,10 @@ use lib3h::transport::{
     protocol::DynTransportActor,
     websocket::{actor::GhostTransportWebsocket, tls::TlsConfig},
 };
-use lib3h_protocol::{uri::Builder, Address};
+use lib3h_protocol::{
+    types::{NetworkHash, NodePubKey},
+    uri::Builder,
+};
 use log::error;
 use sim2h::{Sim2h, MESSAGE_LOGGER};
 use std::path::PathBuf;
@@ -31,9 +34,9 @@ struct Cli {
 
 fn create_websocket_transport() -> DynTransportActor {
     Box::new(GhostTransportWebsocket::new(
-        Address::from("sim2h-worker-transport"),
+        NodePubKey::from("sim2h-worker-transport"),
         TlsConfig::SuppliedCertificate(TlsCertificate::build_from_entropy()),
-        Address::from("sim2h-network"),
+        NetworkHash::from("sim2h-network"),
     ))
 }
 

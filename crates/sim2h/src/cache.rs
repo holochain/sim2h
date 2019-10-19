@@ -2,7 +2,7 @@
 use crate::AgentId;
 use lib3h_protocol::types::AspectHash;
 use lib3h_protocol::types::EntryHash;
-use lib3h_protocol::{uri::Lib3hUri, Address};
+use lib3h_protocol::uri::Lib3hUri;
 use std::collections::{HashMap, HashSet};
 
 pub struct Space {
@@ -43,7 +43,7 @@ impl Space {
         &self.all_aspects_hashes
     }
 
-    pub fn add_aspect(&mut self, entry_address: Address, aspect_address: Address) {
+    pub fn add_aspect(&mut self, entry_address: EntryHash, aspect_address: AspectHash) {
         self.all_aspects_hashes.add(entry_address, aspect_address);
     }
 }
@@ -54,17 +54,17 @@ impl AspectList {
     /// Returns an AspectList list that contains every entry aspect
     /// in self that is not in other.
     pub fn diff(&self, other: &AspectList) -> AspectList {
-        let self_set = HashSet::<(Address, Address)>::from(self);
-        let other_set = HashSet::<(Address, Address)>::from(other);
+        let self_set = HashSet::<(EntryHash, AspectHash)>::from(self);
+        let other_set = HashSet::<(EntryHash, AspectHash)>::from(other);
         AspectList::from(
             &self_set
                 .difference(&other_set)
                 .cloned()
-                .collect::<HashSet<(Address, Address)>>(),
+                .collect::<HashSet<(EntryHash, AspectHash)>>(),
         )
     }
 
-    pub fn add(&mut self, entry_address: Address, aspect_address: Address) {
+    pub fn add(&mut self, entry_address: EntryHash, aspect_address: AspectHash) {
         self.0
             .entry(entry_address)
             .or_insert_with(Vec::new)
@@ -75,7 +75,7 @@ impl AspectList {
         self.0.keys()
     }
 
-    pub fn per_entry(&self, entry_address: &EntryHash) -> Option<&Vec<EntryHash>> {
+    pub fn per_entry(&self, entry_address: &EntryHash) -> Option<&Vec<AspectHash>> {
         self.0.get(entry_address)
     }
 

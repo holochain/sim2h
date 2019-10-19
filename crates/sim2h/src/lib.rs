@@ -12,6 +12,7 @@ pub mod cache;
 pub mod connection_state;
 pub mod crypto;
 pub mod error;
+use lib3h_protocol::types::AgentPubKey;
 mod message_log;
 pub mod wire_message;
 
@@ -27,7 +28,6 @@ use lib3h_protocol::{
     protocol::*,
     types::SpaceHash,
     uri::Lib3hUri,
-    Address,
 };
 use lib3h_zombie_actor::prelude::*;
 pub use wire_message::{WireError, WireMessage};
@@ -89,7 +89,7 @@ impl Sim2h {
             WireMessage::Lib3hToClient(Lib3hToClient::HandleGetAuthoringEntryList(GetListData {
                 request_id: "".into(),
                 space_address,
-                provider_agent_id: provider_agent_id.clone().into(),
+                provider_agent_id: provider_agent_id.clone(),
             }));
         self.send(provider_agent_id, uri, &wire_message);
     }
@@ -104,7 +104,7 @@ impl Sim2h {
             WireMessage::Lib3hToClient(Lib3hToClient::HandleGetGossipingEntryList(GetListData {
                 request_id: "".into(),
                 space_address,
-                provider_agent_id: provider_agent_id.clone().into(),
+                provider_agent_id: provider_agent_id.clone(),
             }));
         self.send(provider_agent_id, uri, &wire_message);
     }
@@ -112,52 +112,51 @@ impl Sim2h {
     // adds an agent to a space
     fn join(&mut self, uri: &Lib3hUri, data: &SpaceData) -> Sim2hResult<()> {
         trace!("join entered");
-        let result = if let Some(ConnectionState::Limbo(pending_messages)) =
-            self.get_connection(uri)
-        {
-            let _ = self.connection_states.write().insert(
-                uri.clone(),
-                ConnectionState::Joined(data.space_address.clone(), data.agent_id.clone().into()),
-            );
-            if !self.spaces.contains_key(&data.space_address) {
-                self.spaces
-                    .insert(data.space_address.clone(), RwLock::new(Space::new()));
-                info!(
-                    "\n\n+++++++++++++++\nNew Space: {}\n+++++++++++++++\n",
-                    data.space_address
+        let result =
+            if let Some(ConnectionState::Limbo(pending_messages)) = self.get_connection(uri) {
+                let _ = self.connection_states.write().insert(
+                    uri.clone(),
+                    ConnectionState::Joined(data.space_address.clone(), data.agent_id.clone()),
                 );
-            }
-            self.spaces
-                .get(&data.space_address)
-                .unwrap()
-                .write()
-                .join_agent(data.agent_id.clone(), uri.clone());
-            info!(
-                "Agent {:?} joined space {:?}",
-                data.agent_id, data.space_address
-            );
-            self.request_authoring_list(
-                uri.clone(),
-                data.space_address.clone(),
-                data.agent_id.clone(),
-            );
-            self.request_gossiping_list(
-                uri.clone(),
-                data.space_address.clone(),
-                data.agent_id.clone(),
-            );
-            for message in *pending_messages {
-                if let Err(err) = self.handle_message(uri, message.clone(), &data.agent_id) {
-                    error!(
-                        "Error while handling limbo pending message {:?} for {}: {}",
-                        message, uri, err
+                if !self.spaces.contains_key(&data.space_address) {
+                    self.spaces
+                        .insert(data.space_address.clone(), RwLock::new(Space::new()));
+                    info!(
+                        "\n\n+++++++++++++++\nNew Space: {}\n+++++++++++++++\n",
+                        data.space_address
                     );
                 }
-            }
-            Ok(())
-        } else {
-            Err(format!("no agent found in limbo at {} ", uri).into())
-        };
+                self.spaces
+                    .get(&data.space_address)
+                    .unwrap()
+                    .write()
+                    .join_agent(data.agent_id.clone(), uri.clone());
+                info!(
+                    "Agent {:?} joined space {:?}",
+                    data.agent_id, data.space_address
+                );
+                self.request_authoring_list(
+                    uri.clone(),
+                    data.space_address.clone(),
+                    data.agent_id.clone(),
+                );
+                self.request_gossiping_list(
+                    uri.clone(),
+                    data.space_address.clone(),
+                    data.agent_id.clone(),
+                );
+                for message in *pending_messages {
+                    if let Err(err) = self.handle_message(uri, message.clone(), &data.agent_id) {
+                        error!(
+                            "Error while handling limbo pending message {:?} for {}: {}",
+                            message, uri, err
+                        );
+                    }
+                }
+                Ok(())
+            } else {
+                Err(format!("no agent found in limbo at {} ", uri).into())
+            };
         trace!("join done");
         result
     }
@@ -200,7 +199,7 @@ impl Sim2h {
     // find out if an agent is in a space or not and return its URI
     fn lookup_joined(&self, space_address: &SpaceHash, agent_id: &AgentId) -> Option<Lib3hUri> {
         self.spaces
-            .get(&space_address)?
+            .get(space_address)?
             .read()
             .agent_id_to_uri(agent_id)
     }
@@ -404,7 +403,7 @@ impl Sim2h {
                 if (data.provider_agent_id != *agent_id) || (data.space_address != *space_address) {
                     return Err(SPACE_MISMATCH_ERR_STR.into());
                 }
-                self.handle_new_entry_data(data.entry, space_address.clone(), agent_id.clone().into());
+                self.handle_new_entry_data(data.entry, space_address.clone(), agent_id.clone());
                 Ok(())
             }
             WireMessage::Lib3hToClientResponse(Lib3hToClientResponse::HandleGetAuthoringEntryListResult(list_data)) => {
@@ -456,7 +455,7 @@ impl Sim2h {
                         .all_agents()
                         .keys()
                         .cloned()
-                        .collect::<Vec<Address>>();
+                        .collect::<Vec<AgentPubKey>>();
                     (agents_in_space, aspects_missing_at_node)
                 };
 
@@ -512,7 +511,7 @@ impl Sim2h {
                     self.handle_new_entry_data(fetch_result.entry, space_address.clone(), agent_id.clone());
                 } else {
                     debug!("Got FetchEntry result with request id {} - this is for gossiping to agent with incomplete data", fetch_result.request_id);
-                    let to_agent_id = Address::from(fetch_result.request_id);
+                    let to_agent_id = AgentPubKey::from(fetch_result.request_id);
                     let maybe_url = self.lookup_joined(space_address, &to_agent_id);;
                     if maybe_url.is_none() {
                         error!("Got FetchEntryResult with request id that is not a known agent id. My hack didn't work?");
@@ -546,7 +545,7 @@ impl Sim2h {
         &mut self,
         entry_data: EntryData,
         space_address: SpaceHash,
-        provider: Address,
+        provider: AgentPubKey,
     ) {
         let aspect_addresses = entry_data
             .aspect_list
@@ -555,7 +554,7 @@ impl Sim2h {
             .map(|aspect_data| aspect_data.aspect_address)
             .collect::<Vec<_>>();
         let mut map = HashMap::new();
-        map.insert(entry_data.entry_address.clone().into(), aspect_addresses);
+        map.insert(entry_data.entry_address.clone(), aspect_addresses);
         let aspect_list = AspectList::from(map);
         debug!("GOT NEW ASPECTS:\n{}", aspect_list.pretty_string());
 
@@ -568,8 +567,8 @@ impl Sim2h {
                     .expect("This function should not get called if we don't have this space")
                     .write();
                 space.add_aspect(
-                    entry_data.entry_address.clone().into(),
-                    aspect.aspect_address.clone().into(),
+                    entry_data.entry_address.clone(),
+                    aspect.aspect_address.clone(),
                 );
                 debug!(
                     "Space {} now knows about these aspects:\n{}",
@@ -583,7 +582,7 @@ impl Sim2h {
                 StoreEntryAspectData {
                     request_id: "".into(),
                     space_address: space_address.clone(),
-                    provider_agent_id: provider.clone().into(),
+                    provider_agent_id: provider.clone(),
                     entry_address: entry_data.entry_address.clone(),
                     entry_aspect: aspect,
                 },
@@ -846,7 +845,7 @@ pub mod tests {
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
             format!(
-                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"{}\")))",
+                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), AgentPubKey(HashString(\"{}\"))))",
                 data.agent_id
             ),
             format!("{:?}", result)
@@ -987,7 +986,7 @@ pub mod tests {
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
             format!(
-                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"{}\")))",
+                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), AgentPubKey(HashString(\"{}\"))))",
                 space_data.agent_id
             ),
             format!("{:?}", result)

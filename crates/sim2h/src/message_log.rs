@@ -119,7 +119,7 @@ impl MessageLogger {
             self.buffer.push_back(MessageLog {
                 time: Self::time(),
                 uri,
-                agent: agent.into(),
+                agent,
                 direction: Direction::In,
                 message,
             });
