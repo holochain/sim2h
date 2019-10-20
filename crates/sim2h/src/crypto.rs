@@ -10,8 +10,8 @@ use holochain_core_types::{
     agent::Base32,
     error::{HcResult, HolochainError},
 };
-use holochain_persistence_api::cas::content::Address;
 use lib3h_protocol::data_types::Opaque;
+use lib3h_protocol::types::AgentPubKey;
 use lib3h_sodium::{secbuf::SecBuf, sign};
 
 use std::convert::TryFrom;
@@ -32,7 +32,7 @@ impl SignedWireMessage {
 
     pub fn new_with_key(
         mut secret_key: &mut SecBuf,
-        agent_id: Address,
+        agent_id: AgentPubKey,
         message: WireMessage,
     ) -> Sim2hResult<Self> {
         let payload: Opaque = message.into();
@@ -46,7 +46,7 @@ impl SignedWireMessage {
 
         let reader = signature_buf.read_lock();
         let signature = base64::encode(&**reader).into();
-        let provenance = Provenance::new(agent_id, signature);
+        let provenance = Provenance::new(agent_id.into(), signature);
         Ok(SignedWireMessage {
             provenance,
             payload,
@@ -172,7 +172,7 @@ pub mod tests {
         assert!(pub_sec_buf.compare(&mut roundtrip) == 0);
     }
 
-    pub fn make_test_agent_with_private_key(seed: &str) -> (Address, SecBuf) {
+    pub fn make_test_agent_with_private_key(seed: &str) -> (AgentPubKey, SecBuf) {
         let codec = HcidEncoding::with_kind("hcs0").expect("HCID failed miserably with_hcs0");
         let mut seed_buf = SecBuf::with_insecure(SEED_SIZE);
         seed_buf

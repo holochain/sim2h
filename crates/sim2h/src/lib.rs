@@ -12,6 +12,7 @@ pub mod cache;
 pub mod connection_state;
 pub mod crypto;
 pub mod error;
+use lib3h_protocol::types::AgentPubKey;
 mod message_log;
 pub mod wire_message;
 
@@ -27,7 +28,6 @@ use lib3h_protocol::{
     protocol::*,
     types::SpaceHash,
     uri::Lib3hUri,
-    Address,
 };
 use lib3h_zombie_actor::prelude::*;
 pub use wire_message::{WireError, WireMessage};
@@ -199,7 +199,7 @@ impl Sim2h {
     // find out if an agent is in a space or not and return its URI
     fn lookup_joined(&self, space_address: &SpaceHash, agent_id: &AgentId) -> Option<Lib3hUri> {
         self.spaces
-            .get(&space_address)?
+            .get(space_address)?
             .read()
             .agent_id_to_uri(agent_id)
     }
@@ -230,7 +230,7 @@ impl Sim2h {
         if message == WireMessage::Ping {
             trace!("Ping -> Pong");
             self.send(signer.clone(), uri.clone(), &WireMessage::Pong);
-            return Ok(())
+            return Ok(());
         }
         MESSAGE_LOGGER
             .lock()
@@ -281,7 +281,7 @@ impl Sim2h {
             return Err(VERIFY_FAILED_ERR_STR.into());
         }
         let wire_message = WireMessage::try_from(signed_message.payload)?;
-        Ok((signed_message.provenance.source(), wire_message))
+        Ok((signed_message.provenance.source().into(), wire_message))
     }
 
     // process transport and  incoming messages from it
@@ -457,7 +457,7 @@ impl Sim2h {
                         .all_agents()
                         .keys()
                         .cloned()
-                        .collect::<Vec<Address>>();
+                        .collect::<Vec<AgentPubKey>>();
                     (agents_in_space, aspects_missing_at_node)
                 };
 
@@ -513,7 +513,7 @@ impl Sim2h {
                     self.handle_new_entry_data(fetch_result.entry, space_address.clone(), agent_id.clone());
                 } else {
                     debug!("Got FetchEntry result with request id {} - this is for gossiping to agent with incomplete data", fetch_result.request_id);
-                    let to_agent_id = Address::from(fetch_result.request_id);
+                    let to_agent_id = AgentPubKey::from(fetch_result.request_id);
                     let maybe_url = self.lookup_joined(space_address, &to_agent_id);;
                     if maybe_url.is_none() {
                         error!("Got FetchEntryResult with request id that is not a known agent id. My hack didn't work?");
@@ -547,7 +547,7 @@ impl Sim2h {
         &mut self,
         entry_data: EntryData,
         space_address: SpaceHash,
-        provider: Address,
+        provider: AgentPubKey,
     ) {
         let aspect_addresses = entry_data
             .aspect_list
@@ -654,7 +654,7 @@ impl Sim2h {
             error!("GhostError during broadcast send: {:?}", e)
         }
         match msg {
-            WireMessage::Ping | WireMessage::Pong => {},
+            WireMessage::Ping | WireMessage::Pong => {}
             _ => debug!("sent."),
         }
     }
@@ -855,7 +855,7 @@ pub mod tests {
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
             format!(
-                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"{}\")))",
+                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), AgentPubKey(HashString(\"{}\"))))",
                 data.agent_id
             ),
             format!("{:?}", result)
@@ -996,7 +996,7 @@ pub mod tests {
         let result = sim2h.get_connection(&uri).clone();
         assert_eq!(
             format!(
-                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), HashString(\"{}\")))",
+                "Some(Joined(SpaceHash(HashString(\"fake_space_address\")), AgentPubKey(HashString(\"{}\"))))",
                 space_data.agent_id
             ),
             format!("{:?}", result)

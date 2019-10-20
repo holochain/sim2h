@@ -1,6 +1,8 @@
 //! implements caching structures for spaces and aspects
 use crate::AgentId;
-use lib3h_protocol::{uri::Lib3hUri, Address};
+use lib3h_protocol::types::AspectHash;
+use lib3h_protocol::types::EntryHash;
+use lib3h_protocol::uri::Lib3hUri;
 use std::collections::{HashMap, HashSet};
 
 pub struct Space {
@@ -41,39 +43,39 @@ impl Space {
         &self.all_aspects_hashes
     }
 
-    pub fn add_aspect(&mut self, entry_address: Address, aspect_address: Address) {
+    pub fn add_aspect(&mut self, entry_address: EntryHash, aspect_address: AspectHash) {
         self.all_aspects_hashes.add(entry_address, aspect_address);
     }
 }
 
 #[derive(Debug)]
-pub struct AspectList(HashMap<Address, Vec<Address>>);
+pub struct AspectList(HashMap<EntryHash, Vec<AspectHash>>);
 impl AspectList {
     /// Returns an AspectList list that contains every entry aspect
     /// in self that is not in other.
     pub fn diff(&self, other: &AspectList) -> AspectList {
-        let self_set = HashSet::<(Address, Address)>::from(self);
-        let other_set = HashSet::<(Address, Address)>::from(other);
+        let self_set = HashSet::<(EntryHash, AspectHash)>::from(self);
+        let other_set = HashSet::<(EntryHash, AspectHash)>::from(other);
         AspectList::from(
             &self_set
                 .difference(&other_set)
                 .cloned()
-                .collect::<HashSet<(Address, Address)>>(),
+                .collect::<HashSet<(EntryHash, AspectHash)>>(),
         )
     }
 
-    pub fn add(&mut self, entry_address: Address, aspect_address: Address) {
+    pub fn add(&mut self, entry_address: EntryHash, aspect_address: AspectHash) {
         self.0
             .entry(entry_address)
             .or_insert_with(Vec::new)
             .push(aspect_address);
     }
 
-    pub fn entry_addresses(&self) -> impl Iterator<Item = &Address> {
+    pub fn entry_addresses(&self) -> impl Iterator<Item = &EntryHash> {
         self.0.keys()
     }
 
-    pub fn per_entry(&self, entry_address: &Address) -> Option<&Vec<Address>> {
+    pub fn per_entry(&self, entry_address: &EntryHash) -> Option<&Vec<AspectHash>> {
         self.0.get(entry_address)
     }
 
@@ -97,14 +99,14 @@ impl AspectList {
     }
 }
 
-impl From<HashMap<Address, Vec<Address>>> for AspectList {
-    fn from(map: HashMap<Address, Vec<Address>>) -> AspectList {
+impl From<HashMap<EntryHash, Vec<AspectHash>>> for AspectList {
+    fn from(map: HashMap<EntryHash, Vec<AspectHash>>) -> AspectList {
         AspectList { 0: map }
     }
 }
 
-impl From<&AspectList> for HashSet<(Address, Address)> {
-    fn from(a: &AspectList) -> HashSet<(Address, Address)> {
+impl From<&AspectList> for HashSet<(EntryHash, AspectHash)> {
+    fn from(a: &AspectList) -> HashSet<(EntryHash, AspectHash)> {
         let mut result = HashSet::new();
         for (entry_address, aspect_list) in a.0.iter() {
             for aspect_address in aspect_list {
@@ -115,9 +117,9 @@ impl From<&AspectList> for HashSet<(Address, Address)> {
     }
 }
 
-impl From<&HashSet<(Address, Address)>> for AspectList {
-    fn from(s: &HashSet<(Address, Address)>) -> AspectList {
-        let mut result: HashMap<Address, Vec<Address>> = HashMap::new();
+impl From<&HashSet<(EntryHash, AspectHash)>> for AspectList {
+    fn from(s: &HashSet<(EntryHash, AspectHash)>) -> AspectList {
+        let mut result: HashMap<EntryHash, Vec<AspectHash>> = HashMap::new();
         for (entry_address, aspect_address) in s {
             if !result.contains_key(entry_address) {
                 result.insert(entry_address.clone(), Vec::new());
