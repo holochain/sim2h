@@ -2,8 +2,7 @@ extern crate structopt;
 
 use lib3h::transport::websocket::tls::TlsCertificate;
 use lib3h::transport::{
-    protocol::DynTransportActor,
-    websocket::{actor::GhostTransportWebsocket, tls::TlsConfig},
+    websocket::{streams::*, tls::TlsConfig},
 };
 use lib3h_protocol::{
     types::{NetworkHash, NodePubKey},
@@ -32,12 +31,18 @@ struct Cli {
     message_log_file: Option<PathBuf>,
 }
 
-fn create_websocket_transport() -> DynTransportActor {
+fn create_websocket_transport<T:std::io::Read + std::fmt::Debug + std::io::Write>() -> StreamManager<std::net::TcpStream> {
+
+    let tls_config =
+        TlsConfig::SuppliedCertificate(TlsCertificate::build_from_entropy());
+    StreamManager::with_std_tcp_stream(tls_config)
+/*
     Box::new(GhostTransportWebsocket::new(
         NodePubKey::from("sim2h-worker-transport"),
         TlsConfig::SuppliedCertificate(TlsCertificate::build_from_entropy()),
         NetworkHash::from("sim2h-network"),
     ))
+    */
 }
 
 fn main() {
